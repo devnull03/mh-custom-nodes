@@ -1,7 +1,15 @@
-from .crop_and_paste import NODE_CLASS_MAPPINGS as NS1, NODE_DISPLAY_NAME_MAPPINGS as NDM1
-from .mask_minimal_crop import NODE_CLASS_MAPPINGS as NS2, NODE_DISPLAY_NAME_MAPPINGS as NDM2
+from .crop_and_paste import NODE_CLASS_MAPPINGS as NS1
+from .crop_and_paste import NODE_DISPLAY_NAME_MAPPINGS as NDM1
 
-NODE_CLASS_MAPPINGS = {**NS1, **NS2}
-NODE_DISPLAY_NAME_MAPPINGS = {**NDM1, **NDM2}
+from .experiment_nodes import NODE_CLASS_MAPPINGS as NS3
+from .experiment_nodes import NODE_DISPLAY_NAME_MAPPINGS as NDM3
 
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
+from .mask_minimal_crop import NODE_CLASS_MAPPINGS as NS2
+from .mask_minimal_crop import NODE_DISPLAY_NAME_MAPPINGS as NDM2
+
+NODE_CLASS_MAPPINGS = {**NS1, **NS2, **NS3}
+NODE_DISPLAY_NAME_MAPPINGS = {**NDM1, **NDM2, **NDM3}
+
+WEB_DIRECTORY = "./web"
+
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
