@@ -32,6 +32,10 @@ class mh_Image_Crop_Location:
                     "INT",
                     {"default": 256, "max": 10000000, "min": 0, "step": 1},
                 ),
+                "divisible_by": (
+                    "INT",
+                    {"default": 16, "min": 1, "max": 256, "step": 1},
+                ),
             }
         }
 
@@ -40,7 +44,9 @@ class mh_Image_Crop_Location:
     FUNCTION = "image_crop_location"
     CATEGORY = "MH/Crop"
 
-    def image_crop_location(self, images, top=0, left=0, right=256, bottom=256):
+    def image_crop_location(
+        self, images, top=0, left=0, right=256, bottom=256, divisible_by=8
+    ):
         batch_size, img_height, img_width, channels = images.shape
 
         crop_top = max(top, 0)
@@ -65,8 +71,8 @@ class mh_Image_Crop_Location:
             (crop_left, crop_top, crop_right, crop_bottom),
         )
 
-        new_width = max((crop_width // 8) * 8, 8)
-        new_height = max((crop_height // 8) * 8, 8)
+        new_width = max((crop_width // divisible_by) * divisible_by, divisible_by)
+        new_height = max((crop_height // divisible_by) * divisible_by, divisible_by)
 
         if new_width != crop_width or new_height != crop_height:
             resized_list = []

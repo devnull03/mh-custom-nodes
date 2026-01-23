@@ -9,6 +9,10 @@ class mh_MaskMinimalCrop:
                 "images": ("IMAGE",),
                 "masks": ("MASK",),
                 "padding": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 1}),
+                "divisible_by": (
+                    "INT",
+                    {"default": 16, "min": 1, "max": 256, "step": 1},
+                ),
             }
         }
 
@@ -17,7 +21,7 @@ class mh_MaskMinimalCrop:
     FUNCTION = "crop"
     CATEGORY = "MH/Crop"
 
-    def crop(self, images, masks, padding=0):
+    def crop(self, images, masks, padding=0, divisible_by=8):
         if len(masks.shape) == 2:
             masks = masks.unsqueeze(0)
 
@@ -43,6 +47,27 @@ class mh_MaskMinimalCrop:
         y_min = max(0, y_min - padding)
         x_max = min(img_width, x_max + padding + 1)
         y_max = min(img_height, y_max + padding + 1)
+
+        crop_width = x_max - x_min
+        crop_height = y_max - y_min
+
+        new_width = ((crop_width + divisible_by - 1) // divisible_by) * divisible_by
+        new_height = ((crop_height + divisible_by - 1) // divisible_by) * divisible_by
+
+        # Center the expansion
+        expand_x = new_width - crop_width
+        expand_y = new_height - crop_height
+
+        x_min = max(0, x_min - expand_x // 2)
+        y_min = max(0, y_min - expand_y // 2)
+        x_max = min(img_width, x_min + new_width)
+        y_max = min(img_height, y_min + new_height)
+
+        # Adjust if we hit boundaries
+        if x_max - x_min < new_width:
+            x_min = max(0, x_max - new_width)
+        if y_max - y_min < new_height:
+            y_min = max(0, y_max - new_height)
 
         cropped_images = images[:, y_min:y_max, x_min:x_max, :]
         cropped_masks = masks[:, y_min:y_max, x_min:x_max]
