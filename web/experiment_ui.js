@@ -1,16 +1,28 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-/**
- * Experiment Controller UI Extension
- * Adds custom UI for managing experiment parameter sweeps in ComfyUI.
- */
-
 app.registerExtension({
-	name: "Comfy.ExperimentController",
+	name: "MH.ExperimentHub",
+
+	async setup() {
+		// Add button to the menu bar
+		const menu = document.querySelector(".comfy-menu");
+		if (menu) {
+			const separator = document.createElement("hr");
+			separator.style.margin = "20px 0";
+			separator.style.width = "100%";
+			menu.append(separator);
+
+			const runButton = document.createElement("button");
+			runButton.textContent = "Run Experiments";
+			runButton.style.width = "100%";
+			runButton.onclick = () => runExperiments();
+			menu.append(runButton);
+		}
+	},
 
 	async beforeRegisterNodeDef(nodeType, nodeData, app) {
-		if (nodeData.name === "MH_ExperimentController") {
+		if (nodeData.name === "MH_ExperimentHub") {
 			const onNodeCreated = nodeType.prototype.onNodeCreated;
 
 			nodeType.prototype.onNodeCreated = function () {
@@ -18,32 +30,19 @@ app.registerExtension({
 					onNodeCreated.apply(this, arguments);
 				}
 
-				this.addWidget("button", "RUN EXPERIMENTS", null, () => {
-					this.runExperiments();
+				// Add "Update Values" button widget
+				this.addWidget("button", "Update Values", null, () => {
+					this.updateHookValues();
 				});
-
-				this.statusWidget = this.addWidget(
-					"text",
-					"Status",
-					"Ready",
-					() => {},
-					{
-						multiline: false,
-						disabled: true,
-					},
-				);
-
-				this.setSize([280, 150]);
 			};
 
-			nodeType.prototype.runExperiments = async function () {
+			nodeType.prototype.updateHookValues = function () {
 				const graph = app.graph;
-				const connectedHooks = [];
+				const numRuns =
+					this.widgets.find((w) => w.name === "num_runs")?.value || 1;
 
 				if (!this.inputs || this.inputs.length === 0) {
-					alert(
-						"No hooks connected! Connect ValueHook nodes to the inputs.",
-					);
+					alert("No hooks connected!");
 					return;
 				}
 
@@ -53,164 +52,147 @@ app.registerExtension({
 						if (!link) continue;
 
 						const sourceNode = graph.getNodeById(link.origin_id);
-						if (!sourceNode) continue;
+						if (!sourceNode || sourceNode.type !== "MH_ValueHook")
+							continue;
 
-						if (sourceNode.type === "MH_ValueHook") {
-							let label = "param";
-							let currentValue = 1.0;
+						const nameWidget = sourceNode.widgets.find(
+							(w) => w.name === "name",
+						);
+						const label = nameWidget?.value || "param";
 
-							if (sourceNode.widgets) {
-								for (const widget of sourceNode.widgets) {
-									if (widget.name === "name") {
-										label = widget.value;
-									}
-									if (widget.name === "value") {
-										currentValue = widget.value;
-									}
-								}
-							}
+						const rangeStr = prompt(
+							`Values for '${label}'? (${numRuns} runs)\n\n` +
+								`Formats:\n` +
+								`  - CSV: 7, 8, 9\n` +
+								`  - Range: start:end:step (e.g., 0.5:1.5:0.1)\n` +
+								`  - Single: 7.5`,
+						);
 
-							const rangeStr = prompt(
-								`Values for '${label}'?\n\n` +
-									`Current value: ${currentValue}\n\n` +
-									`Formats:\n` +
-									`  - CSV: 7, 8, 9\n` +
-									`  - Range: start:end:step (e.g., 0.5:1.5:0.1)\n` +
-									`  - Single: 7.5`,
-								String(currentValue),
-							);
+						if (rangeStr === null) return;
 
-							if (rangeStr === null) {
-								return;
-							}
-
-							const values = parseRange(rangeStr);
-							if (values.length === 0) {
-								alert(
-									`Invalid range format for '${label}': ${rangeStr}`,
-								);
-								return;
-							}
-
-							connectedHooks.push({
-								nodeId: sourceNode.id,
-								label: label,
-								values: values,
-								inputName: input.name,
-							});
+						const values = parseRange(rangeStr);
+						if (values.length === 0) {
+							alert(`Invalid format for '${label}'`);
+							return;
 						}
-					}
-				}
 
-				if (connectedHooks.length === 0) {
-					alert(
-						"No MH Value Hook nodes found among connected inputs!",
-					);
-					return;
-				}
-
-				const combinations = cartesian(
-					connectedHooks.map((h) => h.values),
-				);
-				const expId =
-					"Exp_" +
-					new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-
-				const confirmRun = confirm(
-					`Experiment Setup:\n\n` +
-						`Parameters:\n${connectedHooks.map((h) => `  - ${h.label}: ${h.values.length} values`).join("\n")}\n\n` +
-						`Total combinations: ${combinations.length}\n` +
-						`Experiment ID: ${expId}\n\n` +
-						`Queue ${combinations.length} runs?`,
-				);
-
-				if (!confirmRun) return;
-
-				this.updateStatus(`Queueing 0/${combinations.length}...`);
-
-				try {
-					const apiGraph = await app.graphToPrompt();
-
-					for (let i = 0; i < combinations.length; i++) {
-						const combo = combinations[i];
-
-						const promptPayload = JSON.parse(
-							JSON.stringify(apiGraph.output),
-						);
-						const paramsRecord = { experiment_id: expId };
-
-						combo.forEach((val, idx) => {
-							const hookInfo = connectedHooks[idx];
-							const hookNodeData = promptPayload[hookInfo.nodeId];
-
-							if (hookNodeData && hookNodeData.inputs) {
-								hookNodeData.inputs.value = val;
-							}
-
-							paramsRecord[hookInfo.label] = val;
-						});
-
-						await api.queuePrompt(0, {
-							output: promptPayload,
-							extra_data: {
-								extra_pnginfo: {
-									experiment_params: paramsRecord,
-								},
-							},
-						});
-
-						this.updateStatus(
-							`Queued ${i + 1}/${combinations.length}`,
+						// Store values on the source node for later use
+						sourceNode._experimentValues = values;
+						console.log(
+							`[MH] ${label}: ${values.length} values stored`,
 						);
 					}
-
-					this.updateStatus(
-						`Done: Queued ${combinations.length} runs`,
-					);
-
-					console.log(
-						`[ExperimentController] Queued ${combinations.length} experiment runs with ID: ${expId}`,
-					);
-				} catch (error) {
-					console.error(
-						"[ExperimentController] Error queueing experiments:",
-						error,
-					);
-					this.updateStatus(`Error: ${error.message}`);
-					alert(`Error queueing experiments: ${error.message}`);
 				}
-			};
 
-			nodeType.prototype.updateStatus = function (text) {
-				if (this.statusWidget) {
-					this.statusWidget.value = text;
-				}
-				this.setDirtyCanvas(true, true);
+				alert(
+					"Values updated! Click 'Run Experiments' in the menu to start.",
+				);
 			};
 		}
 	},
 });
 
-/**
- * Parse a range string into an array of values.
- * Supports:
- *   - CSV: "1, 2, 3" or "1,2,3"
- *   - Range: "start:end:step" e.g., "0.1:1.0:0.1"
- *   - Single value: "7.5"
- */
-function parseRange(str) {
-	if (!str || str.trim() === "") {
-		return [];
+async function runExperiments() {
+	const graph = app.graph;
+
+	// Find the ExperimentHub node
+	const hubNode = graph.findNodesByType("MH_ExperimentHub")[0];
+	if (!hubNode) {
+		alert("No MH Experiment Hub node found in the workflow!");
+		return;
 	}
+
+	const numRuns =
+		hubNode.widgets.find((w) => w.name === "num_runs")?.value || 1;
+
+	// Collect all connected hooks with their values
+	const hooks = [];
+	if (hubNode.inputs) {
+		for (const input of hubNode.inputs) {
+			if (input.link) {
+				const link = graph.links[input.link];
+				if (!link) continue;
+
+				const sourceNode = graph.getNodeById(link.origin_id);
+				if (!sourceNode || sourceNode.type !== "MH_ValueHook") continue;
+
+				const nameWidget = sourceNode.widgets.find(
+					(w) => w.name === "name",
+				);
+				const values = sourceNode._experimentValues;
+
+				if (!values || values.length === 0) {
+					alert(
+						`No values set for '${nameWidget?.value || "param"}'. Click 'Update Values' first.`,
+					);
+					return;
+				}
+
+				hooks.push({
+					nodeId: sourceNode.id,
+					label: nameWidget?.value || "param",
+					values: values,
+				});
+			}
+		}
+	}
+
+	if (hooks.length === 0) {
+		alert(
+			"No hooks with values found! Connect ValueHook nodes and click 'Update Values'.",
+		);
+		return;
+	}
+
+	// Generate combinations
+	const combinations = cartesian(hooks.map((h) => h.values));
+	const totalRuns = Math.min(combinations.length, numRuns);
+
+	const confirmRun = confirm(
+		`Experiment Setup:\n\n` +
+			`Parameters:\n${hooks.map((h) => `  - ${h.label}: ${h.values.length} values`).join("\n")}\n\n` +
+			`Total combinations: ${combinations.length}\n` +
+			`Runs to queue: ${totalRuns}\n\n` +
+			`Proceed?`,
+	);
+
+	if (!confirmRun) return;
+
+	try {
+		const apiGraph = await app.graphToPrompt();
+
+		for (let i = 0; i < totalRuns; i++) {
+			const combo = combinations[i];
+			const promptPayload = JSON.parse(JSON.stringify(apiGraph.output));
+
+			combo.forEach((val, idx) => {
+				const hookInfo = hooks[idx];
+				const hookNodeData = promptPayload[hookInfo.nodeId];
+
+				if (hookNodeData && hookNodeData.inputs) {
+					hookNodeData.inputs.value = val;
+				}
+			});
+
+			await api.queuePrompt(0, { output: promptPayload });
+			console.log(`[MH] Queued run ${i + 1}/${totalRuns}`);
+		}
+
+		alert(`Queued ${totalRuns} experiment runs!`);
+	} catch (error) {
+		console.error("[MH] Error:", error);
+		alert(`Error: ${error.message}`);
+	}
+}
+
+function parseRange(str) {
+	if (!str || str.trim() === "") return [];
 
 	str = str.trim();
 
 	if (str.includes(":")) {
 		const parts = str.split(":").map((s) => parseFloat(s.trim()));
-
-		if (parts.length < 2 || parts.some(isNaN)) {
-			return [];
-		}
+		if (parts.length < 2 || parts.some(isNaN)) return [];
 
 		const start = parts[0];
 		const end = parts[1];
@@ -254,23 +236,14 @@ function parseRange(str) {
 		.filter((v) => v !== "" && v !== null);
 }
 
-/**
- * Get the number of decimal places in a number.
- */
 function getDecimalPlaces(num) {
 	const str = String(num);
-	const decimalIndex = str.indexOf(".");
-	if (decimalIndex === -1) return 0;
-	return str.length - decimalIndex - 1;
+	const idx = str.indexOf(".");
+	return idx === -1 ? 0 : str.length - idx - 1;
 }
 
-/**
- * Generate the Cartesian product of multiple arrays.
- * Example: cartesian([[1,2], [a,b]]) => [[1,a], [1,b], [2,a], [2,b]]
- */
 function cartesian(arrays) {
 	if (arrays.length === 0) return [[]];
-
 	return arrays.reduce(
 		(acc, arr) =>
 			acc.flatMap((combo) => arr.map((item) => [...combo, item])),
