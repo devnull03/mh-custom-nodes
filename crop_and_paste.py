@@ -243,12 +243,55 @@ class mh_Image_Paste_Crop:
         )
 
 
+class mh_CropDataInfo:
+    """Extract all values from CROP_DATA for use in other nodes."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "crop_data": ("CROP_DATA",),
+            }
+        }
+
+    RETURN_TYPES = ("INT", "INT", "INT", "INT", "INT", "INT", "INT", "INT")
+    RETURN_NAMES = (
+        "orig_width",
+        "orig_height",
+        "left",
+        "top",
+        "right",
+        "bottom",
+        "crop_width",
+        "crop_height",
+    )
+    FUNCTION = "extract"
+    CATEGORY = "MH/Crop"
+
+    def extract(self, crop_data):
+        (orig_width, orig_height), (left, top, right, bottom) = crop_data
+        crop_width = right - left
+        crop_height = bottom - top
+        return (
+            orig_width,
+            orig_height,
+            left,
+            top,
+            right,
+            bottom,
+            crop_width,
+            crop_height,
+        )
+
+
 NODE_CLASS_MAPPINGS = {
     "mh_Image_Crop_Location": mh_Image_Crop_Location,
     "mh_Image_Paste_Crop": mh_Image_Paste_Crop,
+    "mh_CropDataInfo": mh_CropDataInfo,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "mh_Image_Crop_Location": "MH Image Crop Location",
     "mh_Image_Paste_Crop": "MH Image Paste Crop",
+    "mh_CropDataInfo": "MH Crop Data Info",
 }
