@@ -7,10 +7,6 @@ from PIL import Image
 
 
 class MH_ValueHook:
-    """
-    Acts as a passthrough for a value. Connect to parameters you want to sweep.
-    """
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -37,11 +33,6 @@ class MH_ValueHook:
 
 
 class MH_ExperimentHub:
-    """
-    Central hub for experiment parameter sweeps.
-    Connect ValueHook nodes and use the menu bar button to run experiments.
-    """
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -73,7 +64,6 @@ class MH_ExperimentHub:
                 f"[MH_ExperimentHub] num_runs={num_runs}, hooks={list(connected_hooks.keys())}"
             )
 
-        # Returns current run index (0 for manual runs, JS will inject actual index)
         return (0,)
 
 

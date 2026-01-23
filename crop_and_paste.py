@@ -4,14 +4,12 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 
 def tensor2pil(image):
-    """Convert a single image tensor (H, W, C) to PIL Image."""
     return Image.fromarray(
         np.clip(255.0 * image.cpu().numpy(), 0, 255).astype(np.uint8)
     )
 
 
 def pil2tensor(image):
-    """Convert PIL Image to tensor (1, H, W, C)."""
     return torch.from_numpy(np.array(image).astype(np.float32) / 255.0).unsqueeze(0)
 
 
@@ -43,18 +41,16 @@ class mh_Image_Crop_Location:
     CATEGORY = "MH/Crop"
 
     def image_crop_location(self, images, top=0, left=0, right=256, bottom=256):
-        # images shape: (B, H, W, C)
         batch_size, img_height, img_width, channels = images.shape
 
-        # Calculate and clamp coordinates
         crop_top = max(top, 0)
         crop_left = max(left, 0)
         crop_bottom = min(bottom, img_height)
         crop_right = min(right, img_width)
 
-        # Validate dimensions
         crop_width = crop_right - crop_left
         crop_height = crop_bottom - crop_top
+
         if crop_width <= 0 or crop_height <= 0:
             print("Warning: Invalid crop dimensions. Returning original image.")
             return (
@@ -62,22 +58,15 @@ class mh_Image_Crop_Location:
                 ((img_width, img_height), (0, 0, img_width, img_height)),
             )
 
-        # Crop all batch items using tensor slicing
         cropped = images[:, crop_top:crop_bottom, crop_left:crop_right, :]
 
-        # crop_data format: ((original_img_width, original_img_height), (left, top, right, bottom))
         crop_data = (
             (img_width, img_height),
             (crop_left, crop_top, crop_right, crop_bottom),
         )
 
-        # Resize to 8-pixel multiple for diffusion models
-        new_width = (crop_width // 8) * 8
-        new_height = (crop_height // 8) * 8
-
-        # Ensure at least 8 pixels
-        new_width = max(new_width, 8)
-        new_height = max(new_height, 8)
+        new_width = max((crop_width // 8) * 8, 8)
+        new_height = max((crop_height // 8) * 8, 8)
 
         if new_width != crop_width or new_height != crop_height:
             resized_list = []
@@ -98,8 +87,8 @@ class mh_Image_Paste_Crop:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),  # The original full canvas
-                "crop_images": ("IMAGE",),  # The processed cropped part
+                "images": ("IMAGE",),
+                "crop_images": ("IMAGE",),
                 "crop_data": ("CROP_DATA",),
                 "crop_blending": (
                     "FLOAT",
@@ -127,7 +116,6 @@ class mh_Image_Paste_Crop:
             empty_mask = torch.zeros((batch_size, h, w, 3), dtype=images.dtype)
             return (images, empty_mask)
 
-        # Process each image in the batch
         batch_size = images.shape[0]
         crop_batch_size = crop_images.shape[0]
 
@@ -135,7 +123,6 @@ class mh_Image_Paste_Crop:
         result_masks = []
 
         for i in range(batch_size):
-            # Use corresponding crop image or last one if batch sizes don't match
             crop_idx = min(i, crop_batch_size - 1)
 
             result_img, result_mask = self.paste_image(
@@ -176,15 +163,11 @@ class mh_Image_Paste_Crop:
                     draw.line([(x, 0), (x, size[1])], fill=color)
             return grad_image.convert("L")
 
-        # Unpack crop data
-        # crop_data format: ((original_img_width, original_img_height), (left, top, right, bottom))
         (orig_width, orig_height), (left, top, right, bottom) = crop_data
 
-        # Calculate the target size for the crop (the hole we're filling)
         target_width = right - left
         target_height = bottom - top
 
-        # Resize the processed crop back to fit the original hole
         crop_image_resized = crop_image.resize(
             (target_width, target_height), Image.LANCZOS
         )
@@ -193,21 +176,15 @@ class mh_Image_Paste_Crop:
             for _ in range(int(sharpen_amount)):
                 crop_image_resized = crop_image_resized.filter(ImageFilter.SHARPEN)
 
-        # Create output images at original size
         blended_image = Image.new("RGBA", original_image.size, (0, 0, 0, 255))
         blended_mask = Image.new("L", original_image.size, 0)
         crop_padded = Image.new("RGBA", original_image.size, (0, 0, 0, 0))
 
-        # Paste original image as base
         blended_image.paste(original_image, (0, 0))
-
-        # Paste the resized crop at the correct position
         crop_padded.paste(crop_image_resized, (left, top))
 
-        # Generate Blending Mask
         crop_mask = Image.new("L", crop_image_resized.size, 0)
 
-        # Create gradients at edges if they aren't touching the canvas border
         if top > 0:
             gradient_image = ImageOps.flip(
                 lingrad(crop_image_resized.size, "vertical", blend_amount)
@@ -234,7 +211,6 @@ class mh_Image_Paste_Crop:
         blended_mask.paste(crop_mask, (left, top))
         blended_mask = blended_mask.convert("L")
 
-        # Paste using the mask
         blended_image.paste(crop_padded, (0, 0), blended_mask)
 
         return (
@@ -244,8 +220,6 @@ class mh_Image_Paste_Crop:
 
 
 class mh_CropDataInfo:
-    """Extract all values from CROP_DATA for use in other nodes."""
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
