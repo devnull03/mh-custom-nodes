@@ -1,0 +1,8 @@
+from .crop_and_paste import NODE_CLASS_MAPPINGS as NS1, NODE_DISPLAY_NAME_MAPPINGS as NDM1
+from .mask_minimal_crop import NODE_CLASS_MAPPINGS as NS2, NODE_DISPLAY_NAME_MAPPINGS as NDM2
+
+# Combine the dictionaries from both files
+NODE_CLASS_MAPPINGS = {**NS1, **NS2}
+NODE_DISPLAY_NAME_MAPPINGS = {**NDM1, **NDM2}
+
+__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
