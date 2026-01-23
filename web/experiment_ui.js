@@ -10,7 +10,7 @@ app.registerExtension({
 	name: "Comfy.ExperimentController",
 
 	async beforeRegisterNodeDef(nodeType, nodeData, app) {
-		if (nodeData.name === "ExperimentController") {
+		if (nodeData.name === "MH_ExperimentController") {
 			const onNodeCreated = nodeType.prototype.onNodeCreated;
 
 			nodeType.prototype.onNodeCreated = function () {

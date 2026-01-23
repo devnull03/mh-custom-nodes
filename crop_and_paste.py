@@ -2,21 +2,17 @@ import numpy as np
 import torch
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
-# --- Helper Functions ---
-
 
 def tensor2pil(image):
-    # Assumes input image is (B, H, W, C)
+    """Convert a single image tensor (H, W, C) to PIL Image."""
     return Image.fromarray(
-        np.clip(255.0 * image.cpu().numpy()[0], 0, 255).astype(np.uint8)
+        np.clip(255.0 * image.cpu().numpy(), 0, 255).astype(np.uint8)
     )
 
 
 def pil2tensor(image):
+    """Convert PIL Image to tensor (1, H, W, C)."""
     return torch.from_numpy(np.array(image).astype(np.float32) / 255.0).unsqueeze(0)
-
-
-# --- Nodes ---
 
 
 class mh_Image_Crop_Location:
@@ -46,8 +42,8 @@ class mh_Image_Crop_Location:
     CATEGORY = "MH/Crop"
 
     def image_crop_location(self, image, top=0, left=0, right=256, bottom=256):
-        image = tensor2pil(image)
-        img_width, img_height = image.size
+        # image shape: (B, H, W, C)
+        batch_size, img_height, img_width, channels = image.shape
 
         # Calculate coordinates
         crop_top = max(top, 0)
@@ -61,20 +57,31 @@ class mh_Image_Crop_Location:
         if crop_width <= 0 or crop_height <= 0:
             print("Warning: Invalid crop dimensions. Returning original image.")
             return (
-                pil2tensor(image),
-                (image.size, (0, 0, image.size[0], image.size[1])),
+                image,
+                ((img_width, img_height), (0, 0, img_width, img_height)),
             )
 
-        # Crop and resize to 8-pixel multiple (standard for diffusion models)
-        crop = image.crop((crop_left, crop_top, crop_right, crop_bottom))
+        # Crop all batch items using tensor slicing
+        cropped = image[:, crop_top:crop_bottom, crop_left:crop_right, :]
 
-        # This crop data contains the *original* crop size and coordinates
-        crop_data = (crop.size, (crop_left, crop_top, crop_right, crop_bottom))
+        # Store original crop size before any resizing
+        original_crop_size = (crop_width, crop_height)
+        crop_data = (original_crop_size, (crop_left, crop_top, crop_right, crop_bottom))
 
-        # Resize for processing (optional, but WAS Suite does this)
-        crop = crop.resize((((crop.size[0] // 8) * 8), ((crop.size[1] // 8) * 8)))
+        # Resize to 8-pixel multiple for diffusion models
+        new_width = (crop_width // 8) * 8
+        new_height = (crop_height // 8) * 8
 
-        return (pil2tensor(crop), crop_data)
+        if new_width != crop_width or new_height != crop_height:
+            # Need to resize each image in batch
+            resized_list = []
+            for i in range(batch_size):
+                pil_img = tensor2pil(cropped[i])
+                pil_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
+                resized_list.append(pil2tensor(pil_img))
+            cropped = torch.cat(resized_list, dim=0)
+
+        return (cropped, crop_data)
 
 
 class mh_Image_Paste_Crop:
@@ -109,28 +116,40 @@ class mh_Image_Paste_Crop:
     ):
         if not crop_data:
             print("Error: No valid crop data found!")
-            return (
-                image,
-                pil2tensor(Image.new("RGB", tensor2pil(image).size, (0, 0, 0))),
+            batch_size = image.shape[0]
+            h, w = image.shape[1], image.shape[2]
+            empty_mask = torch.zeros((batch_size, h, w, 3), dtype=image.dtype)
+            return (image, empty_mask)
+
+        # Process each image in the batch
+        batch_size = image.shape[0]
+        crop_batch_size = crop_image.shape[0]
+
+        result_images = []
+        result_masks = []
+
+        for i in range(batch_size):
+            # Use corresponding crop image or last one if batch sizes don't match
+            crop_idx = min(i, crop_batch_size - 1)
+
+            result_img, result_mask = self.paste_image(
+                tensor2pil(image[i]),
+                tensor2pil(crop_image[crop_idx]),
+                crop_data,
+                crop_blending,
+                crop_sharpening,
             )
+            result_images.append(result_img)
+            result_masks.append(result_mask)
 
-        result_image, result_mask = self.paste_image(
-            tensor2pil(image),
-            tensor2pil(crop_image),
-            crop_data,
-            crop_blending,
-            crop_sharpening,
-        )
-
-        return (result_image, result_mask)
+        return (torch.cat(result_images, dim=0), torch.cat(result_masks, dim=0))
 
     def paste_image(
         self, image, crop_image, crop_data, blend_amount=0.25, sharpen_amount=1
     ):
-        # Internal helper for gradient generation
         def lingrad(size, direction, white_ratio):
-            image = Image.new("RGB", size)
-            draw = ImageDraw.Draw(image)
+            grad_image = Image.new("RGB", size)
+            draw = ImageDraw.Draw(grad_image)
             if direction == "vertical":
                 black_end = int(size[1] * (1 - white_ratio))
                 for y in range(size[1]):
@@ -149,10 +168,9 @@ class mh_Image_Paste_Crop:
                         color_val = int(((x - black_end) / (size[0] - black_end)) * 255)
                         color = (color_val, color_val, color_val)
                     draw.line([(x, 0), (x, size[1])], fill=color)
-            return image.convert("L")
+            return grad_image.convert("L")
 
         # Unpack crop data
-        # crop_size is the ORIGINAL size before any 8-pixel rounding
         crop_size, (left, top, right, bottom) = crop_data
 
         # Resize the processed crop back to the original hole size
@@ -205,8 +223,6 @@ class mh_Image_Paste_Crop:
             pil2tensor(blended_mask.convert("RGB")),
         )
 
-
-# --- Node Mapping ---
 
 NODE_CLASS_MAPPINGS = {
     "mh_Image_Crop_Location": mh_Image_Crop_Location,
