@@ -5,7 +5,8 @@ from PIL import Image, ImageOps, ImageDraw, ImageChops, ImageFilter
 # --- Helper Functions ---
 
 def tensor2pil(image):
-    return Image.fromarray(np.clip(255. * image.cpu().numpy().squeeze(), 0, 255).astype(np.uint8))
+    # Assumes input image is (B, H, W, C)
+    return Image.fromarray(np.clip(255. * image.cpu().numpy()[0], 0, 255).astype(np.uint8))
 
 def pil2tensor(image):
     return torch.from_numpy(np.array(image).astype(np.float32) / 255.0).unsqueeze(0)
@@ -30,7 +31,7 @@ class mh_Image_Crop_Location:
 
     RETURN_TYPES = ("IMAGE", "CROP_DATA")
     FUNCTION = "image_crop_location"
-    CATEGORY = "My Custom Nodes/Crop"
+    CATEGORY = "MH Custom Nodes/Crop"
 
     def image_crop_location(self, image, top=0, left=0, right=256, bottom=256):
         image = tensor2pil(image)
@@ -80,7 +81,7 @@ class mh_Image_Paste_Crop:
     RETURN_TYPES = ("IMAGE", "IMAGE")
     RETURN_NAMES = ("IMAGE", "MASK")
     FUNCTION = "image_paste_crop"
-    CATEGORY = "My Custom Nodes/Crop"
+    CATEGORY = "MH Custom Nodes/Crop"
 
     def image_paste_crop(self, image, crop_image, crop_data=None, crop_blending=0.25, crop_sharpening=0):
         if not crop_data:
