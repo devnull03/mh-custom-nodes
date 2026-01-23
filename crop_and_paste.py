@@ -12,7 +12,7 @@ def pil2tensor(image):
 
 # --- Nodes ---
 
-class My_Image_Crop_Location:
+class mh_Image_Crop_Location:
     def __init__(self):
         pass
 
@@ -61,7 +61,7 @@ class My_Image_Crop_Location:
         return (pil2tensor(crop), crop_data)
 
 
-class My_Image_Paste_Crop:
+class mh_Image_Paste_Crop:
     def __init__(self):
         pass
 
@@ -173,11 +173,11 @@ class My_Image_Paste_Crop:
 # --- Node Mapping ---
 
 NODE_CLASS_MAPPINGS = {
-    "My_Image_Crop_Location": My_Image_Crop_Location,
-    "My_Image_Paste_Crop": My_Image_Paste_Crop
+    "mh_Image_Crop_Location": mh_Image_Crop_Location,
+    "mh_Image_Paste_Crop": mh_Image_Paste_Crop
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "My_Image_Crop_Location": "My Image Crop Location",
-    "My_Image_Paste_Crop": "My Image Paste Crop"
+    "mh_Image_Crop_Location": "MH Image Crop Location",
+    "mh_Image_Paste_Crop": "MH Image Paste Crop"
 }
