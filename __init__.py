@@ -1,14 +1,27 @@
-from .crop_and_paste import NODE_CLASS_MAPPINGS as NS1
-from .crop_and_paste import NODE_DISPLAY_NAME_MAPPINGS as NDM1
+import importlib
+import os
+import pkgutil
 
-from .experiment_nodes import NODE_CLASS_MAPPINGS as NS3
-from .experiment_nodes import NODE_DISPLAY_NAME_MAPPINGS as NDM3
+NODE_CLASS_MAPPINGS = {}
+NODE_DISPLAY_NAME_MAPPINGS = {}
 
-from .mask_minimal_crop import NODE_CLASS_MAPPINGS as NS2
-from .mask_minimal_crop import NODE_DISPLAY_NAME_MAPPINGS as NDM2
+package_dir = os.path.dirname(__file__)
 
-NODE_CLASS_MAPPINGS = {**NS1, **NS2, **NS3}
-NODE_DISPLAY_NAME_MAPPINGS = {**NDM1, **NDM2, **NDM3}
+for module_info in pkgutil.iter_modules([package_dir]):
+    if module_info.name.startswith("_"):
+        continue
+
+    try:
+        module = importlib.import_module(f".{module_info.name}", package=__name__)
+
+        if hasattr(module, "NODE_CLASS_MAPPINGS"):
+            NODE_CLASS_MAPPINGS.update(module.NODE_CLASS_MAPPINGS)
+
+        if hasattr(module, "NODE_DISPLAY_NAME_MAPPINGS"):
+            NODE_DISPLAY_NAME_MAPPINGS.update(module.NODE_DISPLAY_NAME_MAPPINGS)
+
+    except Exception as e:
+        print(f"[MH] Failed to import {module_info.name}: {e}")
 
 WEB_DIRECTORY = "./web"
 
