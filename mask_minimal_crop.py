@@ -19,8 +19,8 @@ class mh_MaskMinimalCrop:
                     {"default": 16, "min": 1, "max": 256, "step": 1},
                 ),
                 "scale_mode": (
-                    "STRING",
-                    {"default": "none", "choices": ["none", "original", "custom"]},
+                    ["none", "original", "custom"],
+                    {"default": "none"},
                 ),
                 "target_width": (
                     "INT",
