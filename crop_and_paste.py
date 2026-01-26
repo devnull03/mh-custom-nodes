@@ -65,6 +65,18 @@ class mh_Image_Crop_Location:
                     "INT",
                     {"default": 16, "min": 1, "max": 256, "step": 1},
                 ),
+                "scale_mode": (
+                    "STRING",
+                    {"default": "none", "choices": ["none", "original", "custom"]},
+                ),
+                "target_width": (
+                    "INT",
+                    {"default": 512, "min": 1, "max": 8192, "step": 1},
+                ),
+                "target_height": (
+                    "INT",
+                    {"default": 512, "min": 1, "max": 8192, "step": 1},
+                ),
             }
         }
 
@@ -74,7 +86,16 @@ class mh_Image_Crop_Location:
     CATEGORY = "MH/Crop"
 
     def image_crop_location(
-        self, images, top=0, left=0, right=256, bottom=256, divisible_by=8
+        self,
+        images,
+        top=0,
+        left=0,
+        right=256,
+        bottom=256,
+        divisible_by=8,
+        scale_mode="none",
+        target_width=512,
+        target_height=512,
     ):
         batch_size, img_height, img_width, channels = images.shape
 
@@ -110,6 +131,20 @@ class mh_Image_Crop_Location:
                 pil_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
                 resized_list.append(pil2tensor(pil_img))
             cropped = torch.cat(resized_list, dim=0)
+
+        if scale_mode != "none":
+            if scale_mode == "original":
+                target_w, target_h = img_width, img_height
+            else:
+                target_w = max(1, int(target_width))
+                target_h = max(1, int(target_height))
+
+            scaled_list = []
+            for i in range(batch_size):
+                pil_img = tensor2pil(cropped[i])
+                pil_img = pil_img.resize((target_w, target_h), Image.LANCZOS)
+                scaled_list.append(pil2tensor(pil_img))
+            cropped = torch.cat(scaled_list, dim=0)
 
         return (cropped, crop_data)
 

@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 
 class mh_MaskMinimalCrop:
@@ -17,6 +18,18 @@ class mh_MaskMinimalCrop:
                     "INT",
                     {"default": 16, "min": 1, "max": 256, "step": 1},
                 ),
+                "scale_mode": (
+                    "STRING",
+                    {"default": "none", "choices": ["none", "original", "custom"]},
+                ),
+                "target_width": (
+                    "INT",
+                    {"default": 512, "min": 1, "max": 8192, "step": 1},
+                ),
+                "target_height": (
+                    "INT",
+                    {"default": 512, "min": 1, "max": 8192, "step": 1},
+                ),
             }
         }
 
@@ -25,7 +38,16 @@ class mh_MaskMinimalCrop:
     FUNCTION = "crop"
     CATEGORY = "MH/Crop"
 
-    def crop(self, images, masks, padding=0, divisible_by=8):
+    def crop(
+        self,
+        images,
+        masks,
+        padding=0,
+        divisible_by=8,
+        scale_mode="none",
+        target_width=512,
+        target_height=512,
+    ):
         if len(masks.shape) == 2:
             masks = masks.unsqueeze(0)
 
@@ -76,10 +98,37 @@ class mh_MaskMinimalCrop:
         cropped_images = images[:, y_min:y_max, x_min:x_max, :]
         cropped_masks = masks[:, y_min:y_max, x_min:x_max]
 
+        # Optional scaling of cropped outputs
+        if scale_mode != "none":
+            if scale_mode == "original":
+                target_w, target_h = img_width, img_height
+            else:
+                target_w = max(1, int(target_width))
+                target_h = max(1, int(target_height))
+
+            cropped_images = self._resize_image_bhwc(cropped_images, target_h, target_w)
+            cropped_masks = self._resize_mask_bhw(cropped_masks, target_h, target_w)
+
         crop_data = ((img_width, img_height), (x_min, y_min, x_max, y_max))
         box = (x_min, y_min, x_max, y_max)
 
         return (cropped_images, cropped_masks, crop_data, box)
+
+    def _resize_image_bhwc(self, images, target_h, target_w):
+        # images: [B, H, W, C]
+        nchw = images.permute(0, 3, 1, 2)
+        resized = F.interpolate(
+            nchw, size=(target_h, target_w), mode="bilinear", align_corners=False
+        )
+        return resized.permute(0, 2, 3, 1)
+
+    def _resize_mask_bhw(self, masks, target_h, target_w):
+        # masks: [B, H, W]
+        nchw = masks.unsqueeze(1).float()
+        resized = F.interpolate(
+            nchw, size=(target_h, target_w), mode="bilinear", align_corners=False
+        )
+        return resized.squeeze(1).clamp(0.0, 1.0)
 
 
 class mh_MaskTrackingCrop:
@@ -104,6 +153,18 @@ class mh_MaskTrackingCrop:
                     "FLOAT",
                     {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05},
                 ),
+                "scale_mode": (
+                    "STRING",
+                    {"default": "none", "choices": ["none", "original", "custom"]},
+                ),
+                "target_width": (
+                    "INT",
+                    {"default": 512, "min": 1, "max": 8192, "step": 1},
+                ),
+                "target_height": (
+                    "INT",
+                    {"default": 512, "min": 1, "max": 8192, "step": 1},
+                ),
             }
         }
 
@@ -112,7 +173,17 @@ class mh_MaskTrackingCrop:
     FUNCTION = "crop"
     CATEGORY = "MH/Crop"
 
-    def crop(self, images, masks, padding=32, divisible_by=16, smoothing=0.0):
+    def crop(
+        self,
+        images,
+        masks,
+        padding=32,
+        divisible_by=16,
+        smoothing=0.0,
+        scale_mode="none",
+        target_width=512,
+        target_height=512,
+    ):
         if len(masks.shape) == 2:
             masks = masks.unsqueeze(0)
 
@@ -238,11 +309,25 @@ class mh_MaskTrackingCrop:
         cropped_images = torch.cat(cropped_images_list, dim=0)
         cropped_masks = torch.cat(cropped_masks_list, dim=0)
 
+        # Optional scaling of cropped outputs
+        if scale_mode != "none":
+            if scale_mode == "original":
+                target_w, target_h = img_width, img_height
+            else:
+                target_w = max(1, int(target_width))
+                target_h = max(1, int(target_height))
+            cropped_images = self._resize_image_bhwc(cropped_images, target_h, target_w)
+            cropped_masks = self._resize_mask_bhw(cropped_masks, target_h, target_w)
+            scaled_size = (target_w, target_h)
+        else:
+            scaled_size = None
+
         # Create crop data batch
         crop_data_batch = {
             "original_size": (img_width, img_height),
             "output_size": (output_width, output_height),
             "crop_regions": crop_regions,  # List of (x_min, y_min, x_max, y_max) per frame
+            "scaled_size": scaled_size,
         }
 
         return (
@@ -252,6 +337,22 @@ class mh_MaskTrackingCrop:
             output_width,
             output_height,
         )
+
+    def _resize_image_bhwc(self, images, target_h, target_w):
+        # images: [B, H, W, C]
+        nchw = images.permute(0, 3, 1, 2)
+        resized = F.interpolate(
+            nchw, size=(target_h, target_w), mode="bilinear", align_corners=False
+        )
+        return resized.permute(0, 2, 3, 1)
+
+    def _resize_mask_bhw(self, masks, target_h, target_w):
+        # masks: [B, H, W]
+        nchw = masks.unsqueeze(1).float()
+        resized = F.interpolate(
+            nchw, size=(target_h, target_w), mode="bilinear", align_corners=False
+        )
+        return resized.squeeze(1).clamp(0.0, 1.0)
 
 
 NODE_CLASS_MAPPINGS = {
