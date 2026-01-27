@@ -1,4 +1,3 @@
-```Magic Hour\custom_nodes\mask_boolean.py#L1-120
 import torch
 
 
