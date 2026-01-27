@@ -22,11 +22,7 @@ class mh_MaskMinimalCrop:
                     ["none", "original", "custom"],
                     {"default": "none"},
                 ),
-                "target_width": (
-                    "INT",
-                    {"default": 512, "min": 1, "max": 8192, "step": 1},
-                ),
-                "target_height": (
+                "resolution": (
                     "INT",
                     {"default": 512, "min": 1, "max": 8192, "step": 1},
                 ),
@@ -45,8 +41,7 @@ class mh_MaskMinimalCrop:
         padding=0,
         divisible_by=8,
         scale_mode="none",
-        target_width=512,
-        target_height=512,
+        resolution=512,
     ):
         if len(masks.shape) == 2:
             masks = masks.unsqueeze(0)
@@ -57,7 +52,11 @@ class mh_MaskMinimalCrop:
 
         if len(nonzero) == 0:
             print("Warning: MaskMinimalCrop found no mask pixels. Returning original.")
-            crop_data = ((img_width, img_height), (0, 0, img_width, img_height))
+            crop_data = (
+                (img_width, img_height),
+                (0, 0, img_width, img_height),
+                (img_width, img_height),
+            )
             box = (0, 0, img_width, img_height)
             return (images, masks, crop_data, box)
 
@@ -103,13 +102,30 @@ class mh_MaskMinimalCrop:
             if scale_mode == "original":
                 target_w, target_h = img_width, img_height
             else:
-                target_w = max(1, int(target_width))
-                target_h = max(1, int(target_height))
+                # Scale to resolution while preserving aspect ratio
+                crop_w = int(cropped_images.shape[2])
+                crop_h = int(cropped_images.shape[1])
+                if crop_w >= crop_h:
+                    target_w = resolution
+                    target_h = int(resolution * crop_h / crop_w)
+                else:
+                    target_h = resolution
+                    target_w = int(resolution * crop_w / crop_h)
+                # Ensure divisible_by compliance
+                target_w = max(divisible_by, (target_w // divisible_by) * divisible_by)
+                target_h = max(divisible_by, (target_h // divisible_by) * divisible_by)
 
             cropped_images = self._resize_image_bhwc(cropped_images, target_h, target_w)
             cropped_masks = self._resize_mask_bhw(cropped_masks, target_h, target_w)
 
-        crop_data = ((img_width, img_height), (x_min, y_min, x_max, y_max))
+        output_height = int(cropped_images.shape[1])
+        output_width = int(cropped_images.shape[2])
+
+        crop_data = (
+            (img_width, img_height),
+            (x_min, y_min, x_max, y_max),
+            (output_width, output_height),
+        )
         box = (x_min, y_min, x_max, y_max)
 
         return (cropped_images, cropped_masks, crop_data, box)
@@ -157,11 +173,7 @@ class mh_MaskTrackingCrop:
                     "STRING",
                     {"default": "none", "choices": ["none", "original", "custom"]},
                 ),
-                "target_width": (
-                    "INT",
-                    {"default": 512, "min": 1, "max": 8192, "step": 1},
-                ),
-                "target_height": (
+                "resolution": (
                     "INT",
                     {"default": 512, "min": 1, "max": 8192, "step": 1},
                 ),
@@ -181,8 +193,7 @@ class mh_MaskTrackingCrop:
         divisible_by=16,
         smoothing=0.0,
         scale_mode="none",
-        target_width=512,
-        target_height=512,
+        resolution=512,
     ):
         if len(masks.shape) == 2:
             masks = masks.unsqueeze(0)
@@ -250,7 +261,7 @@ class mh_MaskTrackingCrop:
         prev_cx, prev_cy = None, None
 
         for i, (cx, cy, bw, bh) in enumerate(per_frame_boxes):
-            if smoothing > 0 and prev_cx is not None:
+            if smoothing > 0 and prev_cx is not None and prev_cy is not None:
                 cx = int(prev_cx * smoothing + cx * (1 - smoothing))
                 cy = int(prev_cy * smoothing + cy * (1 - smoothing))
             smoothed_centers.append((cx, cy))
@@ -314,20 +325,27 @@ class mh_MaskTrackingCrop:
             if scale_mode == "original":
                 target_w, target_h = img_width, img_height
             else:
-                target_w = max(1, int(target_width))
-                target_h = max(1, int(target_height))
+                # Scale to resolution while preserving aspect ratio
+                if output_width >= output_height:
+                    target_w = resolution
+                    target_h = int(resolution * output_height / output_width)
+                else:
+                    target_h = resolution
+                    target_w = int(resolution * output_width / output_height)
+                # Ensure divisible_by compliance
+                target_w = max(divisible_by, (target_w // divisible_by) * divisible_by)
+                target_h = max(divisible_by, (target_h // divisible_by) * divisible_by)
             cropped_images = self._resize_image_bhwc(cropped_images, target_h, target_w)
             cropped_masks = self._resize_mask_bhw(cropped_masks, target_h, target_w)
-            scaled_size = (target_w, target_h)
+            final_output_size = (target_w, target_h)
         else:
-            scaled_size = None
+            final_output_size = (output_width, output_height)
 
         # Create crop data batch
         crop_data_batch = {
             "original_size": (img_width, img_height),
-            "output_size": (output_width, output_height),
+            "output_size": final_output_size,
             "crop_regions": crop_regions,  # List of (x_min, y_min, x_max, y_max) per frame
-            "scaled_size": scaled_size,
         }
 
         return (

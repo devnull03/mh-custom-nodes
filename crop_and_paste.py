@@ -69,11 +69,7 @@ class mh_Image_Crop_Location:
                     "STRING",
                     {"default": "none", "choices": ["none", "original", "custom"]},
                 ),
-                "target_width": (
-                    "INT",
-                    {"default": 512, "min": 1, "max": 8192, "step": 1},
-                ),
-                "target_height": (
+                "resolution": (
                     "INT",
                     {"default": 512, "min": 1, "max": 8192, "step": 1},
                 ),
@@ -94,8 +90,7 @@ class mh_Image_Crop_Location:
         bottom=256,
         divisible_by=8,
         scale_mode="none",
-        target_width=512,
-        target_height=512,
+        resolution=512,
     ):
         batch_size, img_height, img_width, channels = images.shape
 
@@ -111,15 +106,14 @@ class mh_Image_Crop_Location:
             print("Warning: Invalid crop dimensions. Returning original image.")
             return (
                 images,
-                ((img_width, img_height), (0, 0, img_width, img_height)),
+                (
+                    (img_width, img_height),
+                    (0, 0, img_width, img_height),
+                    (img_width, img_height),
+                ),
             )
 
         cropped = images[:, crop_top:crop_bottom, crop_left:crop_right, :]
-
-        crop_data = (
-            (img_width, img_height),
-            (crop_left, crop_top, crop_right, crop_bottom),
-        )
 
         new_width = max((crop_width // divisible_by) * divisible_by, divisible_by)
         new_height = max((crop_height // divisible_by) * divisible_by, divisible_by)
@@ -136,8 +130,18 @@ class mh_Image_Crop_Location:
             if scale_mode == "original":
                 target_w, target_h = img_width, img_height
             else:
-                target_w = max(1, int(target_width))
-                target_h = max(1, int(target_height))
+                # Scale to resolution while preserving aspect ratio
+                crop_w = int(cropped.shape[2])
+                crop_h = int(cropped.shape[1])
+                if crop_w >= crop_h:
+                    target_w = resolution
+                    target_h = int(resolution * crop_h / crop_w)
+                else:
+                    target_h = resolution
+                    target_w = int(resolution * crop_w / crop_h)
+                # Ensure divisible_by compliance
+                target_w = max(divisible_by, (target_w // divisible_by) * divisible_by)
+                target_h = max(divisible_by, (target_h // divisible_by) * divisible_by)
 
             scaled_list = []
             for i in range(batch_size):
@@ -145,6 +149,15 @@ class mh_Image_Crop_Location:
                 pil_img = pil_img.resize((target_w, target_h), Image.LANCZOS)
                 scaled_list.append(pil2tensor(pil_img))
             cropped = torch.cat(scaled_list, dim=0)
+
+        output_height = int(cropped.shape[1])
+        output_width = int(cropped.shape[2])
+
+        crop_data = (
+            (img_width, img_height),
+            (crop_left, crop_top, crop_right, crop_bottom),
+            (output_width, output_height),
+        )
 
         return (cropped, crop_data)
 
@@ -215,14 +228,23 @@ class mh_Image_Paste_Crop:
     def paste_image(
         self, original_image, crop_image, crop_data, blend_amount=0.25, sharpen_amount=1
     ):
-        (orig_width, orig_height), (left, top, right, bottom) = crop_data
+        if len(crop_data) >= 3:
+            (orig_width, orig_height), (left, top, right, bottom), (out_w, out_h) = (
+                crop_data
+            )
+        else:
+            (orig_width, orig_height), (left, top, right, bottom) = crop_data
+            out_w, out_h = right - left, bottom - top
 
-        target_width = right - left
-        target_height = bottom - top
+        target_width = max(1, int(out_w))
+        target_height = max(1, int(out_h))
 
-        crop_image_resized = crop_image.resize(
-            (target_width, target_height), Image.LANCZOS
-        )
+        if crop_image.size != (target_width, target_height):
+            crop_image_resized = crop_image.resize(
+                (target_width, target_height), Image.LANCZOS
+            )
+        else:
+            crop_image_resized = crop_image
 
         if sharpen_amount > 0:
             for _ in range(int(sharpen_amount)):
@@ -320,6 +342,7 @@ class mh_Image_Paste_Crop_Tracking:
 
         original_size = crop_data_batch["original_size"]
         crop_regions = crop_data_batch["crop_regions"]
+        output_size = crop_data_batch.get("output_size", None)
 
         batch_size = images.shape[0]
         crop_batch_size = crop_images.shape[0]
@@ -338,6 +361,7 @@ class mh_Image_Paste_Crop_Tracking:
                 tensor2pil(crop_images[crop_idx]),
                 original_size,
                 crop_region,
+                output_size,
                 crop_blending,
                 crop_sharpening,
             )
@@ -352,18 +376,27 @@ class mh_Image_Paste_Crop_Tracking:
         crop_image,
         original_size,
         crop_region,
+        output_size=None,
         blend_amount=0.25,
         sharpen_amount=1,
     ):
         left, top, right, bottom = crop_region
 
-        target_width = right - left
-        target_height = bottom - top
+        if output_size:
+            target_width, target_height = output_size
+        else:
+            target_width = right - left
+            target_height = bottom - top
 
-        # Resize crop image to target size if needed
-        crop_image_resized = crop_image.resize(
-            (target_width, target_height), Image.LANCZOS
-        )
+        target_width = max(1, int(target_width))
+        target_height = max(1, int(target_height))
+
+        if crop_image.size != (target_width, target_height):
+            crop_image_resized = crop_image.resize(
+                (target_width, target_height), Image.LANCZOS
+            )
+        else:
+            crop_image_resized = crop_image
 
         if sharpen_amount > 0:
             for _ in range(int(sharpen_amount)):
@@ -440,9 +473,16 @@ class mh_CropDataInfo:
     CATEGORY = "MH/Crop"
 
     def extract(self, crop_data):
-        (orig_width, orig_height), (left, top, right, bottom) = crop_data
-        crop_width = right - left
-        crop_height = bottom - top
+        if len(crop_data) >= 3:
+            (
+                (orig_width, orig_height),
+                (left, top, right, bottom),
+                (crop_width, crop_height),
+            ) = crop_data
+        else:
+            (orig_width, orig_height), (left, top, right, bottom) = crop_data
+            crop_width = right - left
+            crop_height = bottom - top
         return (
             orig_width,
             orig_height,
