@@ -1,6 +1,53 @@
 import copy
+import math
 
 import numpy as np
+
+
+def align_pose_frames_to_vae(pose_metas, temporal_divisor=4):
+    """
+    Align pose frame count to match VAE's latent frame calculation.
+    
+    The WanVideo VAE compresses video temporally by a factor of 4, using ceil().
+    If pose wrapper uses floor(), there's a mismatch. This function pads
+    the pose frames to ensure they match the VAE's expected count.
+    
+    Args:
+        pose_metas: List of pose metadata objects or dicts.
+        temporal_divisor: VAE's temporal compression factor (default 4).
+    
+    Returns:
+        Aligned pose_metas list with frame count that matches VAE expectations.
+    """
+    if not pose_metas or len(pose_metas) == 0:
+        return pose_metas
+    
+    num_frames = len(pose_metas)
+    
+    # VAE uses ceil, so we need to pad to match
+    target_latent_frames = math.ceil(num_frames / temporal_divisor)
+    target_frames = target_latent_frames * temporal_divisor
+    
+    if num_frames == target_frames:
+        # Already aligned
+        return pose_metas
+    
+    frames_to_add = target_frames - num_frames
+    
+    if frames_to_add > 0:
+        # Pad by repeating the last frame
+        print(f"[PoseAlign] Padding {num_frames} frames to {target_frames} "
+              f"(+{frames_to_add} frames) to match VAE latent calculation")
+        
+        last_frame = pose_metas[-1]
+        for _ in range(frames_to_add):
+            pose_metas.append(copy.deepcopy(last_frame))
+    else:
+        # Trim excess frames (rare case)
+        print(f"[PoseAlign] Trimming {num_frames} frames to {target_frames}")
+        pose_metas = pose_metas[:target_frames]
+    
+    return pose_metas
 
 
 def repair_pose_keypoints(
@@ -236,6 +283,16 @@ class MH_RepairDWPose:
                         "tooltip": "If more than this % of keypoints are missing, replace entire pose",
                     },
                 ),
+                "temporal_divisor": (
+                    "INT",
+                    {
+                        "default": 4,
+                        "min": 1,
+                        "max": 8,
+                        "step": 1,
+                        "tooltip": "VAE temporal compression factor for frame alignment (usually 4)",
+                    },
+                ),
             },
         }
 
@@ -250,6 +307,7 @@ class MH_RepairDWPose:
         confidence_threshold,
         temporal_window,
         heavy_occlusion_threshold,
+        temporal_divisor,
     ):
         # pose_keypoints is typically a list of pose metadata per frame
         if not pose_keypoints or len(pose_keypoints) == 0:
@@ -269,13 +327,61 @@ class MH_RepairDWPose:
             heavy_threshold=heavy_occlusion_threshold,
         )
 
-        return (repaired,)
+        # Align frames to VAE expectations to prevent tensor size mismatch
+        aligned = align_pose_frames_to_vae(repaired, temporal_divisor=temporal_divisor)
+
+        return (aligned,)
+
+
+class MH_AlignPoseFrames:
+    """
+    ComfyUI node that aligns pose frame count to match VAE's latent frame calculation.
+    
+    Fixes the RuntimeError caused by tensor size mismatch between Video VAE (uses ceil)
+    and Pose Wrapper (uses floor) when frame count isn't divisible by 4.
+    
+    Example: 17 frames → VAE expects 5 latent frames, but pose gives 4 → crash.
+    This node pads to 20 frames so both agree on 5 latent frames.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "pose_keypoints": ("POSE_KEYPOINT",),
+                "temporal_divisor": (
+                    "INT",
+                    {
+                        "default": 4,
+                        "min": 1,
+                        "max": 8,
+                        "step": 1,
+                        "tooltip": "VAE temporal compression factor (usually 4)",
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("POSE_KEYPOINT",)
+    RETURN_NAMES = ("aligned_pose",)
+    FUNCTION = "align"
+    CATEGORY = "MH/Pose"
+
+    def align(self, pose_keypoints, temporal_divisor):
+        if not pose_keypoints or len(pose_keypoints) == 0:
+            print("[MH_AlignPoseFrames] No pose keypoints provided, returning empty")
+            return (pose_keypoints,)
+
+        aligned = align_pose_frames_to_vae(pose_keypoints, temporal_divisor)
+        return (aligned,)
 
 
 NODE_CLASS_MAPPINGS = {
     "MH_RepairDWPose": MH_RepairDWPose,
+    "MH_AlignPoseFrames": MH_AlignPoseFrames,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MH_RepairDWPose": "MH Repair DWPose",
+    "MH_AlignPoseFrames": "MH Align Pose Frames",
 }
