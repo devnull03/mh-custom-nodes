@@ -1,7 +1,5 @@
 """
-pose/nodes.py
-
-ComfyUI node definitions for pose rendering and repair.
+pose/nodes.py - ComfyUI node definitions for pose rendering and repair.
 """
 
 import torch
@@ -14,10 +12,6 @@ from .utils import UPSCALE_METHODS
 
 
 class MH_RenderPose:
-    """
-    ComfyUI node that renders pose keypoints to an image.
-    """
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -117,7 +111,6 @@ class MH_RenderPose:
                 draw_face=draw_face,
             )
             
-            # Convert PIL to numpy, then to tensor
             if isinstance(img, Image.Image):
                 img_np = np.array(img).astype(np.float32) / 255.0
             else:
@@ -125,7 +118,6 @@ class MH_RenderPose:
             
             images.append(img_np)
 
-        # Stack into batch tensor [B, H, W, C]
         batch = np.stack(images, axis=0)
         tensor = torch.from_numpy(batch)
 
@@ -133,11 +125,6 @@ class MH_RenderPose:
 
 
 class MH_RepairDWPose:
-    """
-    ComfyUI node that repairs DWPose outputs by interpolating missing/low-confidence
-    keypoints using temporal information from neighboring frames.
-    """
-
     @classmethod
     def INPUT_TYPES(cls):
         return {

@@ -1,7 +1,5 @@
 """
-pose/render.py
-
-Pose drawing and rendering functions.
+pose/render.py - Pose drawing and rendering functions.
 """
 
 from typing import List, Optional, Sequence, Tuple, Any, Dict
@@ -13,12 +11,13 @@ from .keypoints import (
     SimpleKeypoint,
     SimplePoseResult,
     extract_kps_array,
+    extract_all_keypoints,
     normalize_keypoints_array,
     build_simple_poses_from_kps_arrays,
+    build_pose_from_meta,
 )
-from .utils import safe_HWC3, safe_resize_image_with_pad, HWC3, resize_image_with_pad
+from .utils import safe_HWC3, safe_resize_image_with_pad
 
-# Try to import original DWPose drawing code if available
 try:
     from custom_controlnet_aux.dwpose import draw_poses as dw_draw_poses
     from custom_controlnet_aux.dwpose.types import (
@@ -31,7 +30,6 @@ except Exception:
     DWPOSE_DRAW_AVAILABLE = False
 
 
-# Body limb sequence (18-point layout, same as DWPose/OpenPose)
 BODY_LIMB_SEQ = [
     [2, 3], [2, 6], [3, 4], [4, 5],
     [6, 7], [7, 8], [2, 9], [9, 10],
@@ -40,7 +38,6 @@ BODY_LIMB_SEQ = [
     [16, 18],
 ]
 
-# Colors for body limbs
 BODY_COLORS = [
     (255, 0, 0), (255, 85, 0), (255, 170, 0), (255, 255, 0),
     (170, 255, 0), (85, 255, 0), (0, 255, 0), (0, 255, 85),
@@ -49,7 +46,6 @@ BODY_COLORS = [
     (255, 0, 170), (255, 0, 85),
 ]
 
-# Hand edges
 HAND_EDGES = [
     [0, 1], [1, 2], [2, 3], [3, 4],
     [0, 5], [5, 6], [6, 7], [7, 8],
@@ -64,23 +60,11 @@ def draw_bodypose_fallback(
     keypoints: List[Optional[SimpleKeypoint]],
     xinsr_stick_scaling: bool = False,
 ) -> np.ndarray:
-    """
-    Draw body limbs and joints on canvas.
-    
-    Args:
-        canvas: HxWx3 uint8 array
-        keypoints: List of keypoints (normalized 0..1 coords)
-        xinsr_stick_scaling: Unused, kept for API compatibility
-        
-    Returns:
-        Canvas with body pose drawn.
-    """
     if keypoints is None:
         return canvas
     
     H, W, _ = canvas.shape
     
-    # Draw limbs
     for idx, (a, b) in enumerate(BODY_LIMB_SEQ):
         if a - 1 < 0 or b - 1 < 0 or a - 1 >= len(keypoints) or b - 1 >= len(keypoints):
             continue
@@ -96,7 +80,6 @@ def draw_bodypose_fallback(
         color = BODY_COLORS[idx % len(BODY_COLORS)]
         cv2.line(canvas, (x1, y1), (x2, y2), color, thickness=3)
     
-    # Draw joints
     for kp in keypoints:
         if kp is None:
             continue
@@ -110,7 +93,6 @@ def draw_handpose_fallback(
     canvas: np.ndarray,
     keypoints: Optional[List[SimpleKeypoint]],
 ) -> np.ndarray:
-    """Draw hand skeleton on canvas."""
     if keypoints is None:
         return canvas
     
@@ -127,7 +109,6 @@ def draw_handpose_fallback(
         x1, y1 = int(k1.x * W), int(k1.y * H)
         x2, y2 = int(k2.x * W), int(k2.y * H)
         
-        # HSV-based color
         hue = int(ie / len(HAND_EDGES) * 179)
         color_hsv = np.uint8([[[hue, 255, 255]]])
         color = tuple(cv2.cvtColor(color_hsv, cv2.COLOR_HSV2BGR)[0, 0].tolist())
@@ -146,7 +127,6 @@ def draw_facepose_fallback(
     canvas: np.ndarray,
     keypoints: Optional[List[SimpleKeypoint]],
 ) -> np.ndarray:
-    """Draw face keypoints on canvas."""
     if keypoints is None:
         return canvas
     
@@ -170,21 +150,6 @@ def draw_poses_fallback(
     draw_face: bool = True,
     xinsr_stick_scaling: bool = False,
 ) -> np.ndarray:
-    """
-    Draw all poses on a blank canvas.
-    
-    Args:
-        poses: List of SimplePoseResult objects
-        H: Canvas height
-        W: Canvas width
-        draw_body: Whether to draw body pose
-        draw_hand: Whether to draw hand poses
-        draw_face: Whether to draw face keypoints
-        xinsr_stick_scaling: Unused, kept for API compatibility
-        
-    Returns:
-        HxWx3 uint8 canvas with poses drawn.
-    """
     canvas = np.zeros((H, W, 3), dtype=np.uint8)
     
     for pose in poses:
@@ -216,23 +181,6 @@ def render_keypoint_frames_to_image(
     xinsr_stick_scaling: bool = False,
     prefer_repo_draw: bool = True,
 ) -> Tuple[Any, List[Dict]]:
-    """
-    Render keypoint frames to images.
-    
-    Args:
-        frames_meta: Sequence of frame metas (dicts or objects) or a single meta
-        canvas_H, canvas_W: Canvas dimensions for keypoint normalization
-        detect_resolution: Resolution for output (0 = no resize)
-        upscale_method: OpenCV interpolation method
-        output_type: "pil" or "np"
-        draw_body, draw_hand, draw_face: What to draw
-        xinsr_stick_scaling: Pass to drawing functions
-        prefer_repo_draw: Use DWPose drawing if available
-        
-    Returns:
-        (images, openpose_dicts): Rendered images and OpenPose-format dicts
-    """
-    # Accept single meta as well
     if not isinstance(frames_meta, (list, tuple)):
         frames_meta = [frames_meta]
     
@@ -240,17 +188,15 @@ def render_keypoint_frames_to_image(
     images = []
 
     for meta in frames_meta:
-        kps = extract_kps_array(meta)
-        
-        # Get canvas dimensions from meta if available
         if isinstance(meta, dict) and "canvas_height" in meta and "canvas_width" in meta:
             cH = int(meta["canvas_height"])
             cW = int(meta["canvas_width"])
         else:
             cH, cW = canvas_H, canvas_W
         
-        if kps is None:
-            # Produce empty canvas
+        body_kps, left_hand_kps, right_hand_kps, face_kps = extract_all_keypoints(meta)
+        
+        if body_kps is None:
             canvas = np.zeros((cH, cW, 3), dtype=np.uint8)
             openpose_dicts.append({"people": [], "canvas_height": cH, "canvas_width": cW})
             
@@ -260,13 +206,11 @@ def render_keypoint_frames_to_image(
             images.append(Image.fromarray(final) if output_type == "pil" else final)
             continue
 
-        # Normalize keypoints
-        kps_norm = normalize_keypoints_array(kps, cH, cW)
-        poses_for_frame = build_simple_poses_from_kps_arrays([kps_norm], cH, cW)
+        pose = build_pose_from_meta(meta, cH, cW)
 
-        # Try DWPose drawing if available and preferred
         if DWPOSE_DRAW_AVAILABLE and prefer_repo_draw:
             try:
+                kps_norm = normalize_keypoints_array(body_kps, cH, cW)
                 repo_keypoints = []
                 for x, y, c in kps_norm:
                     if c <= 0.0:
@@ -279,7 +223,38 @@ def render_keypoint_frames_to_image(
                     total_score=float(np.nansum(kps_norm[:, 2])),
                     total_parts=sum(1 for p in repo_keypoints if p is not None),
                 )
-                repo_pose = RepoPoseResult(body=repo_body, left_hand=None, right_hand=None, face=None)
+                
+                repo_left_hand = None
+                repo_right_hand = None
+                repo_face = None
+                
+                if left_hand_kps is not None:
+                    lh_norm = normalize_keypoints_array(left_hand_kps, cH, cW)
+                    repo_left_hand = [
+                        RepoKeypoint(x=float(x), y=float(y), score=float(c), id=-1) if c > 0 else None
+                        for x, y, c in lh_norm
+                    ]
+                
+                if right_hand_kps is not None:
+                    rh_norm = normalize_keypoints_array(right_hand_kps, cH, cW)
+                    repo_right_hand = [
+                        RepoKeypoint(x=float(x), y=float(y), score=float(c), id=-1) if c > 0 else None
+                        for x, y, c in rh_norm
+                    ]
+                
+                if face_kps is not None:
+                    face_norm = normalize_keypoints_array(face_kps, cH, cW)
+                    repo_face = [
+                        RepoKeypoint(x=float(x), y=float(y), score=float(c), id=-1) if c > 0 else None
+                        for x, y, c in face_norm
+                    ]
+                
+                repo_pose = RepoPoseResult(
+                    body=repo_body,
+                    left_hand=repo_left_hand,
+                    right_hand=repo_right_hand,
+                    face=repo_face,
+                )
                 
                 repo_canvas = dw_draw_poses(
                     [repo_pose], cH, cW,
@@ -292,21 +267,19 @@ def render_keypoint_frames_to_image(
                 final = safe_HWC3(cropped)
                 images.append(Image.fromarray(final) if output_type == "pil" else final)
                 
-                # Build OpenPose dict
                 people_list = [{
-                    "pose_keypoints_2d": [float(v) for trip in kps for v in trip],
-                    "face_keypoints_2d": None,
-                    "hand_left_keypoints_2d": None,
-                    "hand_right_keypoints_2d": None,
+                    "pose_keypoints_2d": [float(v) for trip in body_kps for v in trip],
+                    "face_keypoints_2d": [float(v) for trip in face_kps for v in trip] if face_kps is not None else None,
+                    "hand_left_keypoints_2d": [float(v) for trip in left_hand_kps for v in trip] if left_hand_kps is not None else None,
+                    "hand_right_keypoints_2d": [float(v) for trip in right_hand_kps for v in trip] if right_hand_kps is not None else None,
                 }]
                 openpose_dicts.append({"people": people_list, "canvas_height": cH, "canvas_width": cW})
                 continue
             except Exception:
-                pass  # Fall through to fallback
+                pass
 
-        # Use fallback drawing
         canvas = draw_poses_fallback(
-            poses_for_frame, cH, cW,
+            [pose], cH, cW,
             draw_body=draw_body, draw_hand=draw_hand, draw_face=draw_face,
             xinsr_stick_scaling=xinsr_stick_scaling,
         )
@@ -317,12 +290,16 @@ def render_keypoint_frames_to_image(
         images.append(Image.fromarray(final) if output_type == "pil" else final)
         
         openpose_dicts.append({
-            "people": [{"pose_keypoints_2d": [float(v) for trip in kps for v in trip]}],
+            "people": [{
+                "pose_keypoints_2d": [float(v) for trip in body_kps for v in trip],
+                "face_keypoints_2d": [float(v) for trip in face_kps for v in trip] if face_kps is not None else None,
+                "hand_left_keypoints_2d": [float(v) for trip in left_hand_kps for v in trip] if left_hand_kps is not None else None,
+                "hand_right_keypoints_2d": [float(v) for trip in right_hand_kps for v in trip] if right_hand_kps is not None else None,
+            }],
             "canvas_height": cH,
             "canvas_width": cW,
         })
 
-    # Return single image if single meta was provided
     if len(images) == 1:
         return images[0], openpose_dicts
     return images, openpose_dicts
@@ -340,12 +317,6 @@ def render_single_meta_to_image(
     draw_face: bool = True,
     xinsr_stick_scaling: bool = False,
 ):
-    """
-    Convenience wrapper for rendering a single frame.
-    
-    Returns:
-        (image, openpose_dict): Rendered image and OpenPose-format dict
-    """
     img, dicts = render_keypoint_frames_to_image(
         [meta], canvas_H, canvas_W,
         detect_resolution=detect_resolution,

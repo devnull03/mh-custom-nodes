@@ -1,13 +1,10 @@
 """
-pose/utils.py
-
-Image utilities for pose rendering: HWC3 normalization, resize with padding, etc.
+pose/utils.py - Image utilities for pose rendering.
 """
 
 import numpy as np
 import cv2
 
-# Try to import original DWPose utilities if available
 try:
     from custom_controlnet_aux.util import (
         resize_image_with_pad as dw_resize_image_with_pad,
@@ -22,7 +19,6 @@ UPSCALE_METHODS = ["INTER_NEAREST", "INTER_LINEAR", "INTER_AREA", "INTER_CUBIC",
 
 
 def get_upscale_method(method_str: str):
-    """Get OpenCV interpolation constant from string name."""
     if method_str not in UPSCALE_METHODS:
         raise ValueError(f"Method {method_str} not found in {UPSCALE_METHODS}")
     return getattr(cv2, method_str)
@@ -46,7 +42,6 @@ def HWC3(x: np.ndarray) -> np.ndarray:
         return x
     if C == 1:
         return np.concatenate([x, x, x], axis=2)
-    # C == 4: flatten alpha over white background
     color = x[:, :, 0:3].astype(np.float32)
     alpha = x[:, :, 3:4].astype(np.float32) / 255.0
     y = color * alpha + 255.0 * (1.0 - alpha)
@@ -54,7 +49,6 @@ def HWC3(x: np.ndarray) -> np.ndarray:
 
 
 def pad64(x: int) -> int:
-    """Calculate padding needed to reach next multiple of 64."""
     return int(np.ceil(float(x) / 64.0) * 64 - x)
 
 
@@ -65,19 +59,6 @@ def resize_image_with_pad(
     skip_hwc3: bool = False,
     mode: str = "edge",
 ):
-    """
-    Resize image preserving aspect ratio and pad to multiples of 64.
-    
-    Args:
-        input_image: Input image array
-        resolution: Target resolution for shortest side (0 = no resize)
-        upscale_method: OpenCV interpolation method name
-        skip_hwc3: If True, skip HWC3 normalization
-        mode: Numpy pad mode
-        
-    Returns:
-        (padded_image, remove_pad_fn): Padded image and function to remove padding
-    """
     if not skip_hwc3:
         img = HWC3(input_image)
     else:
@@ -105,7 +86,6 @@ def resize_image_with_pad(
 
 
 def safe_HWC3(x: np.ndarray) -> np.ndarray:
-    """Use DWPose HWC3 if available, otherwise fallback."""
     if DWPOSE_UTILS_AVAILABLE:
         return dw_HWC3(x)
     return HWC3(x)
@@ -116,7 +96,6 @@ def safe_resize_image_with_pad(
     resolution: int,
     upscale_method: str = "INTER_CUBIC",
 ):
-    """Use DWPose resize if available, otherwise fallback."""
     if DWPOSE_UTILS_AVAILABLE:
         return dw_resize_image_with_pad(input_image, resolution, upscale_method)
     return resize_image_with_pad(input_image, resolution, upscale_method)
