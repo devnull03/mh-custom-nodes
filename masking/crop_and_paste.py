@@ -236,10 +236,13 @@ class mh_Image_Paste_Crop:
             (orig_width, orig_height), (left, top, right, bottom) = crop_data
             out_w, out_h = right - left, bottom - top
 
+        # Ensure all coordinates are integers to handle floating point fps edge cases
+        left, top, right, bottom = int(left), int(top), int(right), int(bottom)
+        
         crop_region_width = right - left
         crop_region_height = bottom - top
-        target_width = max(1, int(crop_region_width))
-        target_height = max(1, int(crop_region_height))
+        target_width = max(1, crop_region_width)
+        target_height = max(1, crop_region_height)
 
         if crop_image.size != (target_width, target_height):
             crop_image_resized = crop_image.resize(
@@ -383,11 +386,14 @@ class mh_Image_Paste_Crop_Tracking:
         sharpen_amount=1,
     ):
         left, top, right, bottom = crop_region
+        
+        # Ensure all coordinates are integers to handle floating point fps edge cases
+        left, top, right, bottom = int(left), int(top), int(right), int(bottom)
 
         crop_region_width = right - left
         crop_region_height = bottom - top
-        target_width = max(1, int(crop_region_width))
-        target_height = max(1, int(crop_region_height))
+        target_width = max(1, crop_region_width)
+        target_height = max(1, crop_region_height)
 
         if crop_image.size != (target_width, target_height):
             crop_image_resized = crop_image.resize(
