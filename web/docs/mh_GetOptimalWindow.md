@@ -11,11 +11,10 @@ Calculates the optimal frame window size for video processing pipelines. Ensures
 
 ## Outputs
 
-- **optimal_window**: Calculated window size that evenly divides the video with minimal overlap
+- **optimal_window**: Calculated window size (chunk size) for processing
 
 ## Notes
 
 - If `video_frames` is less than `base_window * (1 + alpha)`, returns the video length directly
 - Otherwise, calculates the minimum number of chunks needed and distributes frames evenly
 - Final result is rounded up to meet the alignment requirement
-- **Guarantee**: Result is always `>= video_frames` to prevent frame loss during processing
