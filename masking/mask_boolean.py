@@ -45,7 +45,9 @@ class mh_MaskSubtract:
                 f"Mask spatial dimensions must match: {mask_a.shape[1:]} vs {mask_b.shape[1:]}"
             )
 
-        result = (mask_a.float() - mask_b.float()).clamp(0.0, 1.0)
+        original_dtype = mask_a.dtype
+        result = (mask_a.double() - mask_b.double()).clamp(0.0, 1.0)
+        result = result.to(original_dtype)
         return (result,)
 
 

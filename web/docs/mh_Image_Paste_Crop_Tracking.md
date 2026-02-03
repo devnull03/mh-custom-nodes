@@ -14,3 +14,10 @@ Pastes per-frame tracked crops back to their original positions. Works with dyna
 
 - **images**: Composited result with cropped images pasted back at their tracked positions
 - **masks**: Blend masks showing where pasting occurred
+
+## Frame Handling
+
+- Uses 1:1 frame mapping when `crop_images` has enough frames
+- Extra frames in `crop_images` beyond `images` batch size are ignored
+- If `crop_images` has fewer frames, clamps to last available frame (with warning)
+- Region indices are handled similarly for `crop_data_batch`
