@@ -207,21 +207,19 @@ class mh_Image_Paste_Crop:
         batch_size = images.shape[0]
         crop_batch_size = crop_images.shape[0]
         
-        # Warn if frame counts differ
+        # Use the smaller count - discard extra base frames if crop has fewer
+        output_size = min(batch_size, crop_batch_size)
+        
         if batch_size != crop_batch_size:
-            print(f"[crop_and_paste] Frame count mismatch: images={batch_size}, crop_images={crop_batch_size}")
+            print(f"[crop_and_paste] Frame count mismatch: images={batch_size}, crop_images={crop_batch_size}, outputting {output_size}")
 
         result_images = []
         result_masks = []
 
-        for i in range(batch_size):
-            # Use 1:1 mapping when crop_images has enough frames, otherwise clamp
-            # Extra frames in crop_images beyond batch_size are ignored
-            crop_idx = i if i < crop_batch_size else crop_batch_size - 1
-
+        for i in range(output_size):
             result_img, result_mask = self.paste_image(
                 tensor2pil(images[i]),
-                tensor2pil(crop_images[crop_idx]),
+                tensor2pil(crop_images[i]),
                 crop_data,
                 crop_blending,
                 crop_sharpening,
@@ -359,24 +357,21 @@ class mh_Image_Paste_Crop_Tracking:
         crop_batch_size = crop_images.shape[0]
         num_regions = len(crop_regions)
         
-        # Warn if frame counts differ
-        if batch_size != crop_batch_size:
-            print(f"[crop_and_paste_tracking] Frame count mismatch: images={batch_size}, crop_images={crop_batch_size}")
+        # Use the smallest count - discard extra base frames if crop has fewer
+        output_count = min(batch_size, crop_batch_size, num_regions)
+        
+        if batch_size != crop_batch_size or batch_size != num_regions:
+            print(f"[crop_and_paste_tracking] Frame count mismatch: images={batch_size}, crop_images={crop_batch_size}, regions={num_regions}, outputting {output_count}")
 
         result_images = []
         result_masks = []
 
-        for i in range(batch_size):
-            # Use 1:1 mapping when crop_images has enough frames, otherwise clamp
-            # Extra frames in crop_images beyond batch_size are ignored
-            crop_idx = i if i < crop_batch_size else crop_batch_size - 1
-            region_idx = i if i < num_regions else num_regions - 1
-
-            crop_region = crop_regions[region_idx]
+        for i in range(output_count):
+            crop_region = crop_regions[i]
 
             result_img, result_mask = self.paste_image(
                 tensor2pil(images[i]),
-                tensor2pil(crop_images[crop_idx]),
+                tensor2pil(crop_images[i]),
                 original_size,
                 crop_region,
                 output_size,

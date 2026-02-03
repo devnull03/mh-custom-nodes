@@ -50,17 +50,15 @@ class mh_GetOptimalWindow:
         max_allowed = base_window * (1 + alpha)
 
         if video_frames <= max_allowed:
-            # Short video: process all frames at once, no alignment needed
-            optimal = video_frames
+            # Short video: video_frames + align buffer
+            optimal = video_frames + align
         else:
-            # Long video: calculate optimal chunk size
+            # Long video: calculate chunk size, then add align buffer
             num_chunks = math.ceil(video_frames / max_allowed)
-            optimal = math.ceil(video_frames / num_chunks)
-            
-            # Round UP to alignment for chunk processing
-            remainder = optimal % align
-            if remainder != 0:
-                optimal += align - remainder
+            chunk_size = math.ceil(video_frames / num_chunks)
+            optimal = chunk_size + align
+
+        optimal = min(99, optimal)
 
         return (optimal,)
 
