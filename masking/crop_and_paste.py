@@ -270,6 +270,26 @@ class mh_Image_Paste_Crop:
             empty_mask = torch.zeros((batch_size, h, w, 3), dtype=images.dtype)
             return (images, empty_mask)
 
+        # Handle both dict format (new) and tuple format (legacy)
+        if isinstance(crop_data, dict):
+            # Check bypass flag
+            if crop_data.get("bypass", False):
+                print("[mh_Image_Paste_Crop] Bypass flag set, returning crop_images directly.")
+                batch_size = crop_images.shape[0]
+                h, w = crop_images.shape[1], crop_images.shape[2]
+                # Create a full white mask to indicate full coverage
+                full_mask = torch.ones((batch_size, h, w, 3), dtype=crop_images.dtype)
+                return (crop_images, full_mask)
+            
+            orig_width, orig_height = crop_data["original_size"]
+            left, top, right, bottom = crop_data["crop_box"]
+            out_w, out_h = crop_data["output_size"]
+        elif len(crop_data) >= 3:
+            (orig_width, orig_height), (left, top, right, bottom), (out_w, out_h) = crop_data
+        else:
+            (orig_width, orig_height), (left, top, right, bottom) = crop_data
+            out_w, out_h = right - left, bottom - top
+
         batch_size = images.shape[0]
         crop_batch_size = crop_images.shape[0]
         
@@ -279,13 +299,6 @@ class mh_Image_Paste_Crop:
         if batch_size != crop_batch_size:
             print(f"[crop_and_paste] Frame count mismatch: images={batch_size}, crop_images={crop_batch_size}, outputting {output_size}")
 
-        # Extract crop region for drift detection reference
-        if len(crop_data) >= 3:
-            (orig_width, orig_height), (left, top, right, bottom), (out_w, out_h) = crop_data
-        else:
-            (orig_width, orig_height), (left, top, right, bottom) = crop_data
-            out_w, out_h = right - left, bottom - top
-        
         left, top, right, bottom = int(left), int(top), int(right), int(bottom)
 
         result_images = []
@@ -329,7 +342,12 @@ class mh_Image_Paste_Crop:
     def paste_image(
         self, original_image, crop_image, crop_data, blend_amount=0.25, sharpen_amount=1, drift_offset=(0, 0)
     ):
-        if len(crop_data) >= 3:
+        # Handle both dict format (new) and tuple format (legacy)
+        if isinstance(crop_data, dict):
+            orig_width, orig_height = crop_data["original_size"]
+            left, top, right, bottom = crop_data["crop_box"]
+            out_w, out_h = crop_data["output_size"]
+        elif len(crop_data) >= 3:
             (orig_width, orig_height), (left, top, right, bottom), (out_w, out_h) = (
                 crop_data
             )

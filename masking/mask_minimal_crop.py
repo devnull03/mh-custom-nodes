@@ -5,6 +5,7 @@ import torch.nn.functional as F
 class mh_MaskMinimalCrop:
     """
     Static mask cropping - finds bounding box across ALL frames and applies same crop.
+    Includes bypass threshold to skip cropping when mask covers most of the image.
     """
 
     @classmethod
@@ -26,6 +27,10 @@ class mh_MaskMinimalCrop:
                     "INT",
                     {"default": 512, "min": 1, "max": 8192, "step": 1},
                 ),
+                "bypass_threshold": (
+                    "FLOAT",
+                    {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.05},
+                ),
             }
         }
 
@@ -42,21 +47,24 @@ class mh_MaskMinimalCrop:
         divisible_by=8,
         scale_mode="none",
         resolution=512,
+        bypass_threshold=0.9,
     ):
         if len(masks.shape) == 2:
             masks = masks.unsqueeze(0)
 
         batch_size, img_height, img_width, channels = images.shape
+        original_area = img_width * img_height
 
         nonzero = torch.nonzero(masks)
 
         if len(nonzero) == 0:
             print("Warning: MaskMinimalCrop found no mask pixels. Returning original.")
-            crop_data = (
-                (img_width, img_height),
-                (0, 0, img_width, img_height),
-                (img_width, img_height),
-            )
+            crop_data = {
+                "original_size": (img_width, img_height),
+                "crop_box": (0, 0, img_width, img_height),
+                "output_size": (img_width, img_height),
+                "bypass": True,
+            }
             box = (0, 0, img_width, img_height)
             return (images, masks, crop_data, box)
 
@@ -75,6 +83,20 @@ class mh_MaskMinimalCrop:
 
         crop_width = x_max - x_min
         crop_height = y_max - y_min
+        crop_area = crop_width * crop_height
+        area_ratio = crop_area / original_area
+
+        # Check if crop covers most of the image - bypass if so
+        if area_ratio >= bypass_threshold:
+            print(f"[MaskMinimalCrop] Crop area {area_ratio:.1%} >= threshold {bypass_threshold:.1%}, bypassing.")
+            crop_data = {
+                "original_size": (img_width, img_height),
+                "crop_box": (0, 0, img_width, img_height),
+                "output_size": (img_width, img_height),
+                "bypass": True,
+            }
+            box = (0, 0, img_width, img_height)
+            return (images, masks, crop_data, box)
 
         new_width = ((crop_width + divisible_by - 1) // divisible_by) * divisible_by
         new_height = ((crop_height + divisible_by - 1) // divisible_by) * divisible_by
@@ -121,12 +143,15 @@ class mh_MaskMinimalCrop:
         output_height = int(cropped_images.shape[1])
         output_width = int(cropped_images.shape[2])
 
-        crop_data = (
-            (img_width, img_height),
-            (x_min, y_min, x_max, y_max),
-            (output_width, output_height),
-        )
+        crop_data = {
+            "original_size": (img_width, img_height),
+            "crop_box": (x_min, y_min, x_max, y_max),
+            "output_size": (output_width, output_height),
+            "bypass": False,
+        }
         box = (x_min, y_min, x_max, y_max)
+
+        print(f"[MaskMinimalCrop] Crop area {area_ratio:.1%}, box: ({x_min}, {y_min}, {x_max}, {y_max})")
 
         return (cropped_images, cropped_masks, crop_data, box)
 
