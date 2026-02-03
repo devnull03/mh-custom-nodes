@@ -43,7 +43,8 @@ class mh_GetOptimalWindow:
             align: Alignment requirement for the window size (default 4)
 
         Returns:
-            Optimal window size that evenly divides the video with minimal overlap
+            Optimal window size that evenly divides the video with minimal overlap.
+            Always ensures total frames >= original (prefers more frames over fewer).
         """
         max_allowed = base_window * (1 + alpha)
 
@@ -53,9 +54,15 @@ class mh_GetOptimalWindow:
             num_chunks = math.ceil(video_frames / max_allowed)
             optimal = math.ceil(video_frames / num_chunks)
 
+        # Round UP to alignment to ensure we never have fewer frames than original
         remainder = optimal % align
         if remainder != 0:
             optimal += align - remainder
+        
+        # Guarantee: optimal window should never cause fewer total frames
+        # If somehow it does, bump up to next aligned value
+        if optimal < video_frames:
+            optimal = ((video_frames // align) + 1) * align
 
         return (optimal,)
 
