@@ -263,6 +263,7 @@ class mh_Image_Paste_Crop:
     def image_paste_crop(
         self, images, crop_images, crop_data=None, crop_blending=0.25, crop_sharpening=0, drift_correction=False
     ):
+        print(f"DEBUG: [mh_Image_Paste_Crop] drift_correction received: {drift_correction} (type: {type(drift_correction)})")
         if not crop_data:
             print("Error: No valid crop data found!")
             batch_size = images.shape[0]
