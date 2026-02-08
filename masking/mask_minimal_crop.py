@@ -27,6 +27,10 @@ class mh_MaskMinimalCrop:
                     "INT",
                     {"default": 512, "min": 1, "max": 8192, "step": 1},
                 ),
+                "preserve_aspect": (
+                    "BOOLEAN",
+                    {"default": True},
+                ),
                 "bypass_threshold": (
                     "FLOAT",
                     {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.05},
@@ -47,6 +51,7 @@ class mh_MaskMinimalCrop:
         divisible_by=8,
         scale_mode="none",
         resolution=512,
+        preserve_aspect=True,
         bypass_threshold=0.9,
     ):
         if len(masks.shape) == 2:
@@ -124,15 +129,20 @@ class mh_MaskMinimalCrop:
             if scale_mode == "original":
                 target_w, target_h = img_width, img_height
             else:
-                # Scale to resolution while preserving aspect ratio
                 crop_w = int(cropped_images.shape[2])
                 crop_h = int(cropped_images.shape[1])
-                if crop_w >= crop_h:
-                    target_w = resolution
-                    target_h = int(resolution * crop_h / crop_w)
+                if preserve_aspect:
+                    # Scale to resolution while preserving aspect ratio
+                    if crop_w >= crop_h:
+                        target_w = resolution
+                        target_h = int(resolution * crop_h / crop_w)
+                    else:
+                        target_h = resolution
+                        target_w = int(resolution * crop_w / crop_h)
                 else:
+                    # Scale to resolution without preserving aspect ratio (square)
+                    target_w = resolution
                     target_h = resolution
-                    target_w = int(resolution * crop_w / crop_h)
                 # Ensure divisible_by compliance
                 target_w = max(divisible_by, (target_w // divisible_by) * divisible_by)
                 target_h = max(divisible_by, (target_h // divisible_by) * divisible_by)
