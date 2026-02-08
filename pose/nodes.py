@@ -90,7 +90,15 @@ class MH_RenderPose:
         draw_face,
         upscale_method="INTER_CUBIC",
     ):
-        if not pose_keypoints or len(pose_keypoints) == 0:
+        if pose_keypoints is None:
+            print("[MH_RenderPose] No pose keypoints provided, returning empty image")
+            empty = torch.zeros((1, canvas_height, canvas_width, 3), dtype=torch.float32)
+            return (empty,)
+
+        if not isinstance(pose_keypoints, (list, tuple)):
+            pose_keypoints = [pose_keypoints]
+
+        if len(pose_keypoints) == 0:
             print("[MH_RenderPose] No pose keypoints provided, returning empty image")
             empty = torch.zeros((1, canvas_height, canvas_width, 3), dtype=torch.float32)
             return (empty,)
@@ -110,12 +118,12 @@ class MH_RenderPose:
                 draw_hand=draw_hand,
                 draw_face=draw_face,
             )
-            
+
             if isinstance(img, Image.Image):
                 img_np = np.array(img).astype(np.float32) / 255.0
             else:
                 img_np = img.astype(np.float32) / 255.0
-            
+
             images.append(img_np)
 
         batch = np.stack(images, axis=0)
@@ -175,7 +183,14 @@ class MH_RepairDWPose:
         temporal_window,
         heavy_occlusion_threshold,
     ):
-        if not pose_keypoints or len(pose_keypoints) == 0:
+        if pose_keypoints is None:
+            print("[MH_RepairDWPose] No pose keypoints provided, returning empty")
+            return (pose_keypoints,)
+
+        if not isinstance(pose_keypoints, (list, tuple)):
+            pose_keypoints = [pose_keypoints]
+
+        if len(pose_keypoints) == 0:
             print("[MH_RepairDWPose] No pose keypoints provided, returning empty")
             return (pose_keypoints,)
 

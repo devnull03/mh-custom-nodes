@@ -8,6 +8,27 @@ import copy
 import numpy as np
 
 
+def _ensure_kps_confidence(kps):
+    if kps is None:
+        return None
+
+    arr = np.asarray(kps)
+    if arr.size == 0:
+        return arr
+
+    if arr.ndim == 1:
+        if arr.size % 3 == 0:
+            arr = arr.reshape(-1, 3)
+        elif arr.size % 2 == 0:
+            arr = arr.reshape(-1, 2)
+
+    if arr.ndim == 2 and arr.shape[1] == 2:
+        conf = np.ones((arr.shape[0], 1), dtype=arr.dtype)
+        arr = np.concatenate([arr, conf], axis=1)
+
+    return arr.astype(np.float32)
+
+
 def repair_pose_keypoints(
     pose_metas,
     confidence_threshold=0.3,
@@ -16,7 +37,7 @@ def repair_pose_keypoints(
 ):
     """
     Advanced occlusion repair with two strategies:
-    
+
     1. Light occlusion (<50% missing): Interpolate individual keypoints
     2. Heavy occlusion (>50% missing): Replace entire pose with interpolation from good frames
 
@@ -37,13 +58,26 @@ def repair_pose_keypoints(
 
     for meta in pose_metas:
         if hasattr(meta, "kps_body") and meta.kps_body is not None:
-            kps = np.concatenate([meta.kps_body, meta.kps_body_p[:, None]], axis=1)
+            kps_body = np.asarray(meta.kps_body)
+            if kps_body.ndim == 1 and kps_body.size == 2:
+                kps_body = kps_body.reshape(1, 2)
+
+            if hasattr(meta, "kps_body_p") and meta.kps_body_p is not None:
+                probs = np.asarray(meta.kps_body_p).reshape(-1)
+                if probs.shape[0] != kps_body.shape[0]:
+                    probs = probs[: kps_body.shape[0]]
+            else:
+                probs = np.ones((kps_body.shape[0],), dtype=kps_body.dtype)
+
+            kps = np.concatenate([kps_body[:, :2], probs[:, None]], axis=1).astype(np.float32)
         elif hasattr(meta, "keypoints_body"):
             kps = np.array(meta.keypoints_body)
         elif isinstance(meta, dict) and "keypoints_body" in meta:
             kps = np.array(meta["keypoints_body"])
         else:
             kps = None
+
+        kps = _ensure_kps_confidence(kps)
         all_kps.append(kps)
 
         if kps is not None and len(kps) > 0:

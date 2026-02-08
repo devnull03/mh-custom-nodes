@@ -1,4 +1,34 @@
 import torch
+import torch.nn.functional as F
+import math
+
+
+def _gaussian_kernel1d(sigma: float, device) -> torch.Tensor:
+    radius = int(math.ceil(2 * sigma))
+    x = torch.arange(-radius, radius + 1, device=device, dtype=torch.float32)
+    kernel = torch.exp(-(x ** 2) / (2 * sigma ** 2))
+    kernel = kernel / kernel.sum()
+    return kernel
+
+
+def _gaussian_blur_mask(mask: torch.Tensor, radius: float) -> torch.Tensor:
+    if radius is None or radius <= 0:
+        return mask
+    sigma = float(radius)
+    if sigma < 1e-3:
+        return mask
+
+    kernel = _gaussian_kernel1d(sigma, mask.device)
+    pad = kernel.numel() // 2
+
+    mask_f = mask.float().unsqueeze(1)  # [B,1,H,W]
+    kernel_x = kernel.view(1, 1, 1, -1)
+    kernel_y = kernel.view(1, 1, -1, 1)
+
+    mask_f = F.conv2d(mask_f, kernel_x, padding=(0, pad))
+    mask_f = F.conv2d(mask_f, kernel_y, padding=(pad, 0))
+
+    return mask_f.squeeze(1).clamp(0.0, 1.0)
 
 
 class mh_MaskSubtract:
@@ -13,7 +43,13 @@ class mh_MaskSubtract:
             "required": {
                 "mask_a": ("MASK",),
                 "mask_b": ("MASK",),
-            }
+            },
+            "optional": {
+                "blur_radius": (
+                    "FLOAT",
+                    {"default": 0.0, "min": 0.0, "max": 128.0, "step": 0.5},
+                ),
+            },
         }
 
     RETURN_TYPES = ("MASK",)
@@ -21,7 +57,7 @@ class mh_MaskSubtract:
     FUNCTION = "subtract"
     CATEGORY = "MH/Mask"
 
-    def subtract(self, mask_a, mask_b):
+    def subtract(self, mask_a, mask_b, blur_radius=0.0):
         # Ensure 3D tensors [B, H, W]
         if mask_a.dim() == 2:
             mask_a = mask_a.unsqueeze(0)
@@ -46,7 +82,10 @@ class mh_MaskSubtract:
             )
 
         original_dtype = mask_a.dtype
-        result = (mask_a.double() - mask_b.double()).clamp(0.0, 1.0)
+        if blur_radius and blur_radius > 0:
+            mask_b = _gaussian_blur_mask(mask_b, blur_radius)
+
+        result = (mask_a.float() - mask_b.float()).clamp(0.0, 1.0)
         result = result.to(original_dtype)
         return (result,)
 
