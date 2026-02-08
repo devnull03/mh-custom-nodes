@@ -89,6 +89,48 @@ app.registerExtension({
 				);
 			};
 		}
+		if (nodeData.name === "mh_MaskMinimalCrop") {
+			const onNodeCreated = nodeType.prototype.onNodeCreated;
+			const onWidgetChanged = nodeType.prototype.onWidgetChanged;
+
+			function updateResolutionVisibility(node) {
+				const scaleWidget = node.widgets?.find(
+					(w) => w.name === "scale_mode",
+				);
+				const resolutionWidget = node.widgets?.find(
+					(w) => w.name === "resolution",
+				);
+				if (!scaleWidget || !resolutionWidget) return;
+				const show = scaleWidget.value === "custom";
+				resolutionWidget.hidden = !show;
+				if (resolutionWidget.inputEl) {
+					resolutionWidget.inputEl.style.display = show ? "" : "none";
+				}
+				if (node.setSize && node.computeSize) {
+					node.setSize(node.computeSize());
+				}
+			}
+
+			nodeType.prototype.onNodeCreated = function () {
+				if (onNodeCreated) {
+					onNodeCreated.apply(this, arguments);
+				}
+				updateResolutionVisibility(this);
+			};
+
+			nodeType.prototype.onWidgetChanged = function (
+				name,
+				value,
+				widget,
+			) {
+				if (onWidgetChanged) {
+					onWidgetChanged.apply(this, arguments);
+				}
+				if (name === "scale_mode") {
+					updateResolutionVisibility(this);
+				}
+			};
+		}
 	},
 });
 
