@@ -4,6 +4,14 @@ import torch.nn.functional as F
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 
+def _round_up_div(value, divisor):
+    """Round up to the nearest multiple of divisor (minimum = divisor)."""
+    int_value = max(1, int(value))
+    if divisor <= 1:
+        return int_value
+    return max(divisor, ((int_value + divisor - 1) // divisor) * divisor)
+
+
 def tensor2pil(image):
     return Image.fromarray(
         np.clip(255.0 * image.cpu().numpy(), 0, 255).astype(np.uint8)
@@ -122,44 +130,85 @@ class mh_Image_Crop_Location:
                 ),
             )
 
+        # --- Expand the crop region to satisfy divisibility instead of
+        #     resizing the image content (which would shrink it). ---
+        if divisible_by > 1:
+            new_width = _round_up_div(crop_width, divisible_by)
+            new_height = _round_up_div(crop_height, divisible_by)
+        else:
+            new_width = crop_width
+            new_height = crop_height
+
+        # Clamp to image bounds — if rounding up overflows, fall back to
+        # the largest divisible multiple that fits.
+        if new_width > img_width:
+            new_width = (
+                max(divisible_by, (img_width // divisible_by) * divisible_by)
+                if divisible_by > 1
+                else img_width
+            )
+        if new_height > img_height:
+            new_height = (
+                max(divisible_by, (img_height // divisible_by) * divisible_by)
+                if divisible_by > 1
+                else img_height
+            )
+
+        # How much we need to grow the crop region
+        dw = new_width - crop_width
+        dh = new_height - crop_height
+
+        # Expand symmetrically around the original crop center, clamped to image
+        if dw > 0:
+            expand_left = dw // 2
+            expand_right = dw - expand_left
+            crop_left = max(0, crop_left - expand_left)
+            crop_right = min(img_width, crop_left + new_width)
+            # Re-adjust left if right hit the boundary
+            crop_left = max(0, crop_right - new_width)
+
+        if dh > 0:
+            expand_top = dh // 2
+            expand_bottom = dh - expand_top
+            crop_top = max(0, crop_top - expand_top)
+            crop_bottom = min(img_height, crop_top + new_height)
+            crop_top = max(0, crop_bottom - new_height)
+
+        # Update actual dimensions after expansion
+        crop_width = crop_right - crop_left
+        crop_height = crop_bottom - crop_top
+
         cropped = images[:, crop_top:crop_bottom, crop_left:crop_right, :]
-
-        new_width = max((crop_width // divisible_by) * divisible_by, divisible_by)
-        new_height = max((crop_height // divisible_by) * divisible_by, divisible_by)
-
-        if new_width != crop_width or new_height != crop_height:
-            if resize_mode == "lanczos":
-                resized_list = []
-                for i in range(batch_size):
-                    pil_img = tensor2pil(cropped[i])
-                    pil_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
-                    resized_list.append(pil2tensor(pil_img))
-                cropped = torch.cat(resized_list, dim=0)
-            else:
-                cropped = F.interpolate(
-                    cropped.permute(0, 3, 1, 2),
-                    size=(new_height, new_width),
-                    mode=resize_mode,
-                    align_corners=False,
-                    antialias=True,
-                ).permute(0, 2, 3, 1)
 
         if scale_mode != "none":
             if scale_mode == "original":
                 target_w, target_h = img_width, img_height
             else:
-                # Scale to resolution while preserving aspect ratio
-                crop_w = int(cropped.shape[2])
-                crop_h = int(cropped.shape[1])
-                if crop_w >= crop_h:
-                    target_w = resolution
-                    target_h = int(resolution * crop_h / crop_w)
+                # Scale to resolution preserving aspect ratio — use a single
+                # scale factor so both dims stay proportional.
+                if crop_width >= crop_height:
+                    scale = resolution / crop_width
                 else:
-                    target_h = resolution
-                    target_w = int(resolution * crop_w / crop_h)
-                # Ensure divisible_by compliance
-                target_w = max(divisible_by, (target_w // divisible_by) * divisible_by)
-                target_h = max(divisible_by, (target_h // divisible_by) * divisible_by)
+                    scale = resolution / crop_height
+                target_w = max(1, round(crop_width * scale))
+                target_h = max(1, round(crop_height * scale))
+
+                # Round the longer side, then re-derive the shorter side
+                # from the rounded value to keep the aspect ratio intact.
+                if divisible_by > 1:
+                    target_w = _round_up_div(target_w, divisible_by)
+                    if target_w > resolution * 2:
+                        target_w = max(
+                            divisible_by,
+                            (resolution * 2 // divisible_by) * divisible_by,
+                        )
+                    target_h = max(1, round(target_w * crop_height / crop_width))
+                    target_h = _round_up_div(target_h, divisible_by)
+                    if target_h > resolution * 2:
+                        target_h = max(
+                            divisible_by,
+                            (resolution * 2 // divisible_by) * divisible_by,
+                        )
 
             if resize_mode == "lanczos":
                 scaled_list = []
@@ -537,7 +586,14 @@ class mh_CropDataInfo:
     CATEGORY = "MH/Crop"
 
     def extract(self, crop_data):
-        if len(crop_data) >= 3:
+        # Handle dict format (from mh_MaskMinimalCrop) and tuple format (legacy)
+        if isinstance(crop_data, dict):
+            orig_width, orig_height = crop_data["original_size"]
+            left, top, right, bottom = crop_data["crop_box"]
+            crop_width, crop_height = crop_data.get(
+                "output_size", (right - left, bottom - top)
+            )
+        elif len(crop_data) >= 3:
             (
                 (orig_width, orig_height),
                 (left, top, right, bottom),
@@ -550,12 +606,12 @@ class mh_CropDataInfo:
         return (
             orig_width,
             orig_height,
-            left,
-            top,
-            right,
-            bottom,
-            crop_width,
-            crop_height,
+            int(left),
+            int(top),
+            int(right),
+            int(bottom),
+            int(crop_width),
+            int(crop_height),
         )
 
 

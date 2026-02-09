@@ -58,30 +58,32 @@ def _resize_bhw(masks, h, w, mode="bicubic"):
     )
 
 
-def _round_up(value, divisor, max_value=None):
-    """Round up to nearest multiple of divisor, minimum = 1."""
-    int_value = max(1, int(value))
+def _round_to_divisible(value, divisor, max_value):
+    """
+    Round value to the nearest multiple of divisor that fits within max_value.
+    Prefers rounding UP so we never shrink below the requested size.
+    Falls back to rounding DOWN only when rounding up would exceed max_value.
+    The result is always a multiple of divisor (minimum = divisor),
+    unless divisor itself exceeds max_value, in which case max_value is returned.
+    """
     if divisor <= 1:
-        result = int_value
-    else:
-        result = ((int_value + divisor - 1) // divisor) * divisor
-    if max_value is not None:
-        result = min(result, int(max_value))
-    return result
+        return min(max(1, int(value)), int(max_value))
 
-
-def _round_down(value, divisor, max_value=None):
-    """Round down to nearest multiple of divisor, minimum = 1."""
     int_value = max(1, int(value))
-    if divisor <= 1:
-        result = int_value
-    elif int_value < divisor:
-        result = int_value
-    else:
-        result = (int_value // divisor) * divisor
-    if max_value is not None:
-        result = min(result, int(max_value))
-    return result
+    max_val = int(max_value)
+
+    # If divisor is larger than the image dimension, just return max_value
+    if divisor > max_val:
+        return max_val
+
+    # Try rounding up first — this preserves or expands the crop
+    rounded_up = ((int_value + divisor - 1) // divisor) * divisor
+    if rounded_up <= max_val:
+        return rounded_up
+
+    # Rounding up exceeds bounds — use the largest multiple that fits
+    rounded_down = (max_val // divisor) * divisor
+    return max(divisor, rounded_down)
 
 
 def _clamp_box_to_image(x_min, y_min, width, height, img_w, img_h):
@@ -206,7 +208,8 @@ class mh_MaskMinimalCrop:
 
         x_min, y_min, x_max, y_max = bbox
 
-        # Apply padding
+        # Apply padding (x_max/y_max are inclusive pixel indices from bbox,
+        # so +1 converts to exclusive, then +padding extends further)
         x_min = max(0, x_min - padding)
         y_min = max(0, y_min - padding)
         x_max = min(img_w, x_max + padding + 1)
@@ -236,11 +239,11 @@ class mh_MaskMinimalCrop:
         else:
             new_w, new_h = crop_w, crop_h
 
-        # Round up to divisible_by, then clamp to image bounds
-        new_w = _round_up(new_w, divisible_by, img_w)
-        new_h = _round_up(new_h, divisible_by, img_h)
-        new_w = _round_down(new_w, divisible_by, img_w)
-        new_h = _round_down(new_h, divisible_by, img_h)
+        # Round to divisible — prefers rounding UP so we never shrink below
+        # the mask bounding box. Only rounds down if rounding up would exceed
+        # the image dimension.
+        new_w = _round_to_divisible(new_w, divisible_by, img_w)
+        new_h = _round_to_divisible(new_h, divisible_by, img_h)
 
         # Center the crop on the bounding box center, clamped to image
         cx = (x_min + x_max) // 2
@@ -289,17 +292,28 @@ class mh_MaskMinimalCrop:
     ):
         if mode == "original":
             return img_w, img_h
+
+        # Calculate the scale factor from the longest side so we can apply it
+        # uniformly to both dimensions, preserving aspect ratio.
         if preserve_aspect:
             if crop_w >= crop_h:
-                target_w = resolution
-                target_h = int(resolution * crop_h / crop_w)
+                scale = resolution / crop_w
             else:
-                target_h = resolution
-                target_w = int(resolution * crop_w / crop_h)
+                scale = resolution / crop_h
+            target_w = max(1, round(crop_w * scale))
+            target_h = max(1, round(crop_h * scale))
+
+            # Round both to divisible, then correct the shorter side to keep
+            # the aspect ratio as close as possible.
+            target_w = _round_to_divisible(target_w, divisible_by, resolution * 2)
+            # Re-derive height from the rounded width to maintain AR
+            target_h = max(1, round(target_w * crop_h / crop_w))
+            target_h = _round_to_divisible(target_h, divisible_by, resolution * 2)
         else:
             target_w = target_h = resolution
-        target_w = max(divisible_by, _round_down(target_w, divisible_by))
-        target_h = max(divisible_by, _round_down(target_h, divisible_by))
+            target_w = _round_to_divisible(target_w, divisible_by, resolution * 2)
+            target_h = _round_to_divisible(target_h, divisible_by, resolution * 2)
+
         return target_w, target_h
 
 
@@ -383,11 +397,9 @@ class mh_MaskTrackingCrop:
             print("Warning: MaskTrackingCrop found no mask pixels in any frame.")
             max_w, max_h = img_w // 4, img_h // 4
 
-        # Output size from max bbox + padding, divisible and clamped
-        out_w = _round_up(max_w + padding * 2, divisible_by, img_w)
-        out_h = _round_up(max_h + padding * 2, divisible_by, img_h)
-        out_w = _round_down(out_w, divisible_by, img_w)
-        out_h = _round_down(out_h, divisible_by, img_h)
+        # Output size from max bbox + padding, rounded to divisible and clamped
+        out_w = _round_to_divisible(max_w + padding * 2, divisible_by, img_w)
+        out_h = _round_to_divisible(max_h + padding * 2, divisible_by, img_h)
 
         # Temporal smoothing
         smoothed_centers = []
@@ -425,14 +437,19 @@ class mh_MaskTrackingCrop:
             if scale_mode == "original":
                 target_w, target_h = img_w, img_h
             else:
+                # Scale to resolution preserving aspect ratio
                 if out_w >= out_h:
-                    target_w = resolution
-                    target_h = int(resolution * out_h / out_w)
+                    scale = resolution / out_w
                 else:
-                    target_h = resolution
-                    target_w = int(resolution * out_w / out_h)
-                target_w = max(divisible_by, _round_down(target_w, divisible_by))
-                target_h = max(divisible_by, _round_down(target_h, divisible_by))
+                    scale = resolution / out_h
+                target_w = max(1, round(out_w * scale))
+                target_h = max(1, round(out_h * scale))
+
+                # Round the longer side, then re-derive shorter to keep AR
+                target_w = _round_to_divisible(target_w, divisible_by, resolution * 2)
+                target_h = max(1, round(target_w * out_h / out_w))
+                target_h = _round_to_divisible(target_h, divisible_by, resolution * 2)
+
             cropped_images = _resize_bhwc(
                 cropped_images, target_h, target_w, resize_mode
             )
