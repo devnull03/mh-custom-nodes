@@ -8,7 +8,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {}
 package_dir = os.path.dirname(__file__)
 
 for module_info in pkgutil.iter_modules([package_dir]):
-    if module_info.name.startswith("_"):
+    if module_info.name.startswith("_") or module_info.name == "web":
         continue
 
     try:

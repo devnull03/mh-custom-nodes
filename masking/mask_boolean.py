@@ -1,22 +1,30 @@
+import math
+
 import torch
 import torch.nn.functional as F
-import math
 
 
 def _gaussian_kernel1d(sigma: float, device) -> torch.Tensor:
     radius = int(math.ceil(2 * sigma))
     x = torch.arange(-radius, radius + 1, device=device, dtype=torch.float32)
-    kernel = torch.exp(-(x ** 2) / (2 * sigma ** 2))
+    kernel = torch.exp(-(x**2) / (2 * sigma**2))
     kernel = kernel / kernel.sum()
     return kernel
 
 
-def _gaussian_blur_mask(mask: torch.Tensor, radius: float) -> torch.Tensor:
+def _gaussian_blur_mask(
+    mask: torch.Tensor, radius: float, padding_mode: str = "replicate"
+) -> torch.Tensor:
     if radius is None or radius <= 0:
         return mask
     sigma = float(radius)
     if sigma < 1e-3:
         return mask
+
+    if padding_mode not in {"constant", "replicate", "reflect"}:
+        raise ValueError(
+            f"Invalid padding_mode: {padding_mode}. Use constant, replicate, or reflect."
+        )
 
     kernel = _gaussian_kernel1d(sigma, mask.device)
     pad = kernel.numel() // 2
@@ -25,8 +33,13 @@ def _gaussian_blur_mask(mask: torch.Tensor, radius: float) -> torch.Tensor:
     kernel_x = kernel.view(1, 1, 1, -1)
     kernel_y = kernel.view(1, 1, -1, 1)
 
-    mask_f = F.conv2d(mask_f, kernel_x, padding=(0, pad))
-    mask_f = F.conv2d(mask_f, kernel_y, padding=(pad, 0))
+    if pad > 0:
+        mask_f = F.pad(mask_f, (pad, pad, 0, 0), mode=padding_mode)
+    mask_f = F.conv2d(mask_f, kernel_x, padding=0)
+
+    if pad > 0:
+        mask_f = F.pad(mask_f, (0, 0, pad, pad), mode=padding_mode)
+    mask_f = F.conv2d(mask_f, kernel_y, padding=0)
 
     return mask_f.squeeze(1).clamp(0.0, 1.0)
 
@@ -49,6 +62,13 @@ class mh_MaskSubtract:
                     "FLOAT",
                     {"default": 0.0, "min": 0.0, "max": 128.0, "step": 0.5},
                 ),
+                "blur_padding": (
+                    "STRING",
+                    {
+                        "default": "replicate",
+                        "choices": ["constant", "replicate", "reflect"],
+                    },
+                ),
             },
         }
 
@@ -57,7 +77,7 @@ class mh_MaskSubtract:
     FUNCTION = "subtract"
     CATEGORY = "MH/Mask"
 
-    def subtract(self, mask_a, mask_b, blur_radius=0.0):
+    def subtract(self, mask_a, mask_b, blur_radius=0.0, blur_padding="replicate"):
         # Ensure 3D tensors [B, H, W]
         if mask_a.dim() == 2:
             mask_a = mask_a.unsqueeze(0)
@@ -83,7 +103,7 @@ class mh_MaskSubtract:
 
         original_dtype = mask_a.dtype
         if blur_radius and blur_radius > 0:
-            mask_b = _gaussian_blur_mask(mask_b, blur_radius)
+            mask_b = _gaussian_blur_mask(mask_b, blur_radius, blur_padding)
 
         result = (mask_a.float() - mask_b.float()).clamp(0.0, 1.0)
         result = result.to(original_dtype)

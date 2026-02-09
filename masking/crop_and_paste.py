@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 
@@ -73,6 +74,13 @@ class mh_Image_Crop_Location:
                     "INT",
                     {"default": 512, "min": 1, "max": 8192, "step": 1},
                 ),
+                "resize_mode": (
+                    "STRING",
+                    {
+                        "default": "bicubic",
+                        "choices": ["bilinear", "bicubic", "lanczos"],
+                    },
+                ),
             }
         }
 
@@ -91,6 +99,7 @@ class mh_Image_Crop_Location:
         divisible_by=8,
         scale_mode="none",
         resolution=512,
+        resize_mode="bicubic",
     ):
         batch_size, img_height, img_width, channels = images.shape
 
@@ -119,12 +128,21 @@ class mh_Image_Crop_Location:
         new_height = max((crop_height // divisible_by) * divisible_by, divisible_by)
 
         if new_width != crop_width or new_height != crop_height:
-            resized_list = []
-            for i in range(batch_size):
-                pil_img = tensor2pil(cropped[i])
-                pil_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
-                resized_list.append(pil2tensor(pil_img))
-            cropped = torch.cat(resized_list, dim=0)
+            if resize_mode == "lanczos":
+                resized_list = []
+                for i in range(batch_size):
+                    pil_img = tensor2pil(cropped[i])
+                    pil_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
+                    resized_list.append(pil2tensor(pil_img))
+                cropped = torch.cat(resized_list, dim=0)
+            else:
+                cropped = F.interpolate(
+                    cropped.permute(0, 3, 1, 2),
+                    size=(new_height, new_width),
+                    mode=resize_mode,
+                    align_corners=False,
+                    antialias=True,
+                ).permute(0, 2, 3, 1)
 
         if scale_mode != "none":
             if scale_mode == "original":
@@ -143,12 +161,21 @@ class mh_Image_Crop_Location:
                 target_w = max(divisible_by, (target_w // divisible_by) * divisible_by)
                 target_h = max(divisible_by, (target_h // divisible_by) * divisible_by)
 
-            scaled_list = []
-            for i in range(batch_size):
-                pil_img = tensor2pil(cropped[i])
-                pil_img = pil_img.resize((target_w, target_h), Image.LANCZOS)
-                scaled_list.append(pil2tensor(pil_img))
-            cropped = torch.cat(scaled_list, dim=0)
+            if resize_mode == "lanczos":
+                scaled_list = []
+                for i in range(batch_size):
+                    pil_img = tensor2pil(cropped[i])
+                    pil_img = pil_img.resize((target_w, target_h), Image.LANCZOS)
+                    scaled_list.append(pil2tensor(pil_img))
+                cropped = torch.cat(scaled_list, dim=0)
+            else:
+                cropped = F.interpolate(
+                    cropped.permute(0, 3, 1, 2),
+                    size=(target_h, target_w),
+                    mode=resize_mode,
+                    align_corners=False,
+                    antialias=True,
+                ).permute(0, 2, 3, 1)
 
         output_height = int(cropped.shape[1])
         output_width = int(cropped.shape[2])
@@ -217,17 +244,6 @@ class mh_Image_Paste_Crop:
                 full_mask = torch.ones((batch_size, h, w, 3), dtype=crop_images.dtype)
                 return (crop_images, full_mask)
 
-            orig_width, orig_height = crop_data["original_size"]
-            left, top, right, bottom = crop_data["crop_box"]
-            out_w, out_h = crop_data["output_size"]
-        elif len(crop_data) >= 3:
-            (orig_width, orig_height), (left, top, right, bottom), (out_w, out_h) = (
-                crop_data
-            )
-        else:
-            (orig_width, orig_height), (left, top, right, bottom) = crop_data
-            out_w, out_h = right - left, bottom - top
-
         batch_size = images.shape[0]
         crop_batch_size = crop_images.shape[0]
 
@@ -238,8 +254,6 @@ class mh_Image_Paste_Crop:
             print(
                 f"[crop_and_paste] Frame count mismatch: images={batch_size}, crop_images={crop_batch_size}, outputting {output_size}"
             )
-
-        left, top, right, bottom = int(left), int(top), int(right), int(bottom)
 
         result_images = []
         result_masks = []
