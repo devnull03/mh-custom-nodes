@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
-from scipy import ndimage
 
 
 def tensor2pil(image):
@@ -37,67 +36,6 @@ def lingrad(size, direction, white_ratio):
                 color = (color_val, color_val, color_val)
             draw.line([(x, 0), (x, size[1])], fill=color)
     return grad_image.convert("L")
-
-
-def detect_drift_phase_correlation(original_crop, generated_crop, search_radius=16):
-    """
-    Detect spatial drift between original and generated crop using phase correlation.
-    This is the fastest method (~2ms per frame) using FFT.
-    
-    Args:
-        original_crop: PIL Image of the original cropped region
-        generated_crop: PIL Image of the generated output
-        search_radius: Maximum drift to detect in pixels
-    
-    Returns:
-        (dx, dy): Detected drift offset to compensate
-    """
-    # Convert to grayscale numpy arrays
-    orig_gray = np.array(original_crop.convert('L'), dtype=np.float32)
-    gen_gray = np.array(generated_crop.convert('L'), dtype=np.float32)
-    
-    # Ensure same size
-    if orig_gray.shape != gen_gray.shape:
-        # Resize generated to match original
-        generated_crop_resized = generated_crop.resize(original_crop.size, Image.LANCZOS)
-        gen_gray = np.array(generated_crop_resized.convert('L'), dtype=np.float32)
-    
-    # Apply window function to reduce edge effects
-    h, w = orig_gray.shape
-    window_h = np.hanning(h).reshape(-1, 1)
-    window_w = np.hanning(w).reshape(1, -1)
-    window = window_h * window_w
-    
-    orig_windowed = orig_gray * window
-    gen_windowed = gen_gray * window
-    
-    # Compute FFT
-    fft_orig = np.fft.fft2(orig_windowed)
-    fft_gen = np.fft.fft2(gen_windowed)
-    
-    # Cross-power spectrum
-    cross_power = fft_orig * np.conj(fft_gen)
-    cross_power_norm = cross_power / (np.abs(cross_power) + 1e-10)
-    
-    # Inverse FFT to get correlation
-    correlation = np.fft.ifft2(cross_power_norm)
-    correlation = np.abs(np.fft.fftshift(correlation))
-    
-    # Find peak within search radius
-    center_y, center_x = h // 2, w // 2
-    y_min = max(0, center_y - search_radius)
-    y_max = min(h, center_y + search_radius + 1)
-    x_min = max(0, center_x - search_radius)
-    x_max = min(w, center_x + search_radius + 1)
-    
-    search_region = correlation[y_min:y_max, x_min:x_max]
-    peak_idx = np.unravel_index(np.argmax(search_region), search_region.shape)
-    
-    # Calculate offset from center
-    dy = peak_idx[0] - (center_y - y_min)
-    dx = peak_idx[1] - (center_x - x_min)
-    
-    return int(dx), int(dy)
 
 
 class mh_Image_Crop_Location:
@@ -248,10 +186,6 @@ class mh_Image_Paste_Crop:
                     "INT",
                     {"default": 0, "min": 0, "max": 3, "step": 1},
                 ),
-                "drift_correction": (
-                    "BOOLEAN",
-                    {"default": False},
-                ),
             }
         }
 
@@ -261,9 +195,8 @@ class mh_Image_Paste_Crop:
     CATEGORY = "MH/Crop"
 
     def image_paste_crop(
-        self, images, crop_images, crop_data=None, crop_blending=0.25, crop_sharpening=0, drift_correction=False
+        self, images, crop_images, crop_data=None, crop_blending=0.25, crop_sharpening=0
     ):
-        print(f"DEBUG: [mh_Image_Paste_Crop] drift_correction received: {drift_correction} (type: {type(drift_correction)})")
         if not crop_data:
             print("Error: No valid crop data found!")
             batch_size = images.shape[0]
@@ -275,73 +208,60 @@ class mh_Image_Paste_Crop:
         if isinstance(crop_data, dict):
             # Check bypass flag
             if crop_data.get("bypass", False):
-                print("[mh_Image_Paste_Crop] Bypass flag set, returning crop_images directly.")
+                print(
+                    "[mh_Image_Paste_Crop] Bypass flag set, returning crop_images directly."
+                )
                 batch_size = crop_images.shape[0]
                 h, w = crop_images.shape[1], crop_images.shape[2]
                 # Create a full white mask to indicate full coverage
                 full_mask = torch.ones((batch_size, h, w, 3), dtype=crop_images.dtype)
                 return (crop_images, full_mask)
-            
+
             orig_width, orig_height = crop_data["original_size"]
             left, top, right, bottom = crop_data["crop_box"]
             out_w, out_h = crop_data["output_size"]
         elif len(crop_data) >= 3:
-            (orig_width, orig_height), (left, top, right, bottom), (out_w, out_h) = crop_data
+            (orig_width, orig_height), (left, top, right, bottom), (out_w, out_h) = (
+                crop_data
+            )
         else:
             (orig_width, orig_height), (left, top, right, bottom) = crop_data
             out_w, out_h = right - left, bottom - top
 
         batch_size = images.shape[0]
         crop_batch_size = crop_images.shape[0]
-        
+
         # Use the smaller count - discard extra base frames if crop has fewer
         output_size = min(batch_size, crop_batch_size)
-        
+
         if batch_size != crop_batch_size:
-            print(f"[crop_and_paste] Frame count mismatch: images={batch_size}, crop_images={crop_batch_size}, outputting {output_size}")
+            print(
+                f"[crop_and_paste] Frame count mismatch: images={batch_size}, crop_images={crop_batch_size}, outputting {output_size}"
+            )
 
         left, top, right, bottom = int(left), int(top), int(right), int(bottom)
 
         result_images = []
         result_masks = []
-        
-        drift_offsets = []
 
         for i in range(output_size):
             original_pil = tensor2pil(images[i])
             crop_pil = tensor2pil(crop_images[i])
-            
-            # Calculate drift correction if enabled
-            dx, dy = 0, 0
-            if drift_correction:
-                # Extract original crop region for comparison
-                original_crop_region = original_pil.crop((left, top, right, bottom))
-                dx, dy = detect_drift_phase_correlation(original_crop_region, crop_pil)
-                drift_offsets.append((dx, dy))
-            
+
             result_img, result_mask = self.paste_image(
                 original_pil,
                 crop_pil,
                 crop_data,
                 crop_blending,
                 crop_sharpening,
-                drift_offset=(dx, dy),
             )
             result_images.append(result_img)
             result_masks.append(result_mask)
-        
-        if drift_correction and drift_offsets:
-            # Log drift statistics
-            avg_dx = sum(d[0] for d in drift_offsets) / len(drift_offsets)
-            avg_dy = sum(d[1] for d in drift_offsets) / len(drift_offsets)
-            max_dx = max(abs(d[0]) for d in drift_offsets)
-            max_dy = max(abs(d[1]) for d in drift_offsets)
-            print(f"[drift_correction] Avg offset: ({avg_dx:.1f}, {avg_dy:.1f}), Max: ({max_dx}, {max_dy})")
 
         return (torch.cat(result_images, dim=0), torch.cat(result_masks, dim=0))
 
     def paste_image(
-        self, original_image, crop_image, crop_data, blend_amount=0.25, sharpen_amount=1, drift_offset=(0, 0)
+        self, original_image, crop_image, crop_data, blend_amount=0.25, sharpen_amount=1
     ):
         # Handle both dict format (new) and tuple format (legacy)
         if isinstance(crop_data, dict):
@@ -358,20 +278,7 @@ class mh_Image_Paste_Crop:
 
         # Ensure all coordinates are integers
         left, top, right, bottom = int(left), int(top), int(right), int(bottom)
-        
-        # Apply drift correction offset
-        dx, dy = drift_offset
-        left -= dx
-        top -= dy
-        right -= dx
-        bottom -= dy
-        
-        # Clamp to image bounds after drift correction
-        left = max(0, min(left, original_image.width - 1))
-        top = max(0, min(top, original_image.height - 1))
-        right = max(left + 1, min(right, original_image.width))
-        bottom = max(top + 1, min(bottom, original_image.height))
-        
+
         crop_region_width = right - left
         crop_region_height = bottom - top
         target_width = max(1, crop_region_width)
@@ -485,12 +392,14 @@ class mh_Image_Paste_Crop_Tracking:
         batch_size = images.shape[0]
         crop_batch_size = crop_images.shape[0]
         num_regions = len(crop_regions)
-        
+
         # Use the smallest count - discard extra base frames if crop has fewer
         output_count = min(batch_size, crop_batch_size, num_regions)
-        
+
         if batch_size != crop_batch_size or batch_size != num_regions:
-            print(f"[crop_and_paste_tracking] Frame count mismatch: images={batch_size}, crop_images={crop_batch_size}, regions={num_regions}, outputting {output_count}")
+            print(
+                f"[crop_and_paste_tracking] Frame count mismatch: images={batch_size}, crop_images={crop_batch_size}, regions={num_regions}, outputting {output_count}"
+            )
 
         result_images = []
         result_masks = []
@@ -523,7 +432,7 @@ class mh_Image_Paste_Crop_Tracking:
         sharpen_amount=1,
     ):
         left, top, right, bottom = crop_region
-        
+
         # Ensure all coordinates are integers to handle floating point fps edge cases
         left, top, right, bottom = int(left), int(top), int(right), int(bottom)
 
