@@ -63,11 +63,8 @@ class mh_MaskSubtract:
                     {"default": 0.0, "min": 0.0, "max": 128.0, "step": 0.5},
                 ),
                 "blur_padding": (
-                    "STRING",
-                    {
-                        "default": "replicate",
-                        "choices": ["constant", "replicate", "reflect"],
-                    },
+                    ["constant", "replicate", "reflect"],
+                    {"default": "replicate"},
                 ),
             },
         }
