@@ -46,7 +46,7 @@ class mh_SAM3FindValidRange:
 
         for frame_idx, scores in sam3_scores.items():
             if isinstance(scores, torch.Tensor):
-                max_score = scores.max().item()
+                max_score = scores.max().item() if scores.numel() > 0 else 0.0
             elif isinstance(scores, (list, tuple)):
                 max_score = max(scores) if scores else 0.0
             elif isinstance(scores, (int, float)):
