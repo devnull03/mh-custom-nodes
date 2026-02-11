@@ -19,10 +19,10 @@ class mh_BBoxMaskSelector:
         return {
             "required": {
                 "boxes": ("STRING", {
-                    "multiline": True,
+                    "forceInput": True,
                     "tooltip": (
                         "JSON array of bounding boxes, each [x1, y1, x2, y2]. "
-                        "Example: [[10, 20, 100, 200], [50, 60, 150, 250]]"
+                        "Connect from a detection node output."
                     ),
                 }),
                 "indexes": ("STRING", {
@@ -51,7 +51,7 @@ class mh_BBoxMaskSelector:
     CATEGORY = "MH/SAM3"
 
     def select(self, boxes, indexes, box_type, masks=None):
-        empty_prompt = json.dumps({"boxes": [], "labels": []})
+        empty_prompt = {"boxes": [], "labels": []}
 
         # ── parse boxes ──────────────────────────────────────────────────
         try:
@@ -94,7 +94,6 @@ class mh_BBoxMaskSelector:
             "boxes": selected_boxes,
             "labels": [label_value] * len(selected_boxes),
         }
-        prompt_json = json.dumps(prompt)
 
         # ── select masks ─────────────────────────────────────────────────
         selected_masks = None
@@ -113,7 +112,7 @@ class mh_BBoxMaskSelector:
             f"boxes (indexes: {valid_idxs}, type: {box_type})"
         )
 
-        return (prompt_json, selected_masks)
+        return (prompt, selected_masks)
 
 
 NODE_CLASS_MAPPINGS = {
