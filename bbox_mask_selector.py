@@ -3,15 +3,14 @@ import torch
 
 
 class mh_BBoxMaskSelector:
-    """Select one or more bounding boxes (and their matching masks) by index.
+    """Select bounding boxes by index and convert to SAM3 prompt format.
 
-    Indexes are given as a comma-separated string, e.g. "0,2,4".
-    Boxes input is a JSON string containing a list of [x1, y1, x2, y2] arrays.
-    Masks input is a dict keyed by frame index (matching the boxes ordering).
+    Input boxes are absolute pixel [x1, y1, x2, y2] from a detection node.
+    Output is a SAM3-compatible prompt with normalized [cx, cy, w, h] coords.
 
-    Output is a SAM3 boxes prompt dict:
-        {"boxes": [[x1,y1,x2,y2], ...], "labels": [true, ...]}
-    Labels are true for positive boxes, false for negative.
+    Conversion pipeline:
+        pixel [x1,y1,x2,y2]  →  normalize by image size  →  [cx,cy,w,h]
+        → wrap in {"boxes": [...], "labels": [...]}
     """
 
     @classmethod
@@ -21,9 +20,19 @@ class mh_BBoxMaskSelector:
                 "boxes": ("STRING", {
                     "forceInput": True,
                     "tooltip": (
-                        "JSON array of bounding boxes, each [x1, y1, x2, y2]. "
-                        "Connect from a detection node output."
+                        "JSON array of bounding boxes in pixel coords, "
+                        "each [x1, y1, x2, y2]. Connect from a detection node."
                     ),
+                }),
+                "image_width": ("INT", {
+                    "default": 576,
+                    "min": 1,
+                    "tooltip": "Width of the source image in pixels (for normalization)",
+                }),
+                "image_height": ("INT", {
+                    "default": 1024,
+                    "min": 1,
+                    "tooltip": "Height of the source image in pixels (for normalization)",
                 }),
                 "indexes": ("STRING", {
                     "default": "0",
@@ -50,7 +59,17 @@ class mh_BBoxMaskSelector:
     FUNCTION = "select"
     CATEGORY = "MH/SAM3"
 
-    def select(self, boxes, indexes, box_type, masks=None):
+    @staticmethod
+    def _pixel_to_sam3(box, img_w, img_h):
+        """Convert pixel [x1, y1, x2, y2] → normalized [cx, cy, w, h]."""
+        x1, y1, x2, y2 = box
+        cx = ((x1 + x2) / 2.0) / img_w
+        cy = ((y1 + y2) / 2.0) / img_h
+        w = abs(x2 - x1) / img_w
+        h = abs(y2 - y1) / img_h
+        return [cx, cy, w, h]
+
+    def select(self, boxes, image_width, image_height, indexes, box_type, masks=None):
         empty_prompt = {"boxes": [], "labels": []}
 
         # ── parse boxes ──────────────────────────────────────────────────
@@ -87,19 +106,33 @@ class mh_BBoxMaskSelector:
             print("[MH BBox Selector] Warning: no valid indexes selected.")
             return (empty_prompt, torch.zeros(0))
 
-        # ── build SAM3 boxes prompt ──────────────────────────────────────
-        label_value = box_type == "positive"  # True for +ve, False for -ve
-        selected_boxes = [all_boxes[i] for i in valid_idxs]
+        # ── convert & build SAM3 boxes prompt ────────────────────────────
+        label_value = box_type == "positive"
+        converted_boxes = [
+            self._pixel_to_sam3(all_boxes[i], image_width, image_height)
+            for i in valid_idxs
+        ]
+
         prompt = {
-            "boxes": selected_boxes,
-            "labels": [label_value] * len(selected_boxes),
+            "boxes": converted_boxes,
+            "labels": [label_value] * len(converted_boxes),
         }
+
+        # log both raw and converted for debugging
+        for i, idx in enumerate(valid_idxs):
+            raw = all_boxes[idx]
+            conv = converted_boxes[i]
+            print(
+                f"[MH BBox Selector]   #{idx}: "
+                f"pixel [{raw[0]:.1f}, {raw[1]:.1f}, {raw[2]:.1f}, {raw[3]:.1f}] → "
+                f"norm  [{conv[0]:.4f}, {conv[1]:.4f}, {conv[2]:.4f}, {conv[3]:.4f}]"
+            )
 
         # ── select masks ─────────────────────────────────────────────────
         selected_masks = None
         if masks is not None:
             try:
-                selected_masks = masks[valid_idxs]  # tensor index with list
+                selected_masks = masks[valid_idxs]
             except (IndexError, RuntimeError) as e:
                 print(f"[MH BBox Selector] Warning: mask selection failed — {e}")
                 selected_masks = torch.zeros(0, *masks.shape[1:])
@@ -109,7 +142,8 @@ class mh_BBoxMaskSelector:
 
         print(
             f"[MH BBox Selector] Selected {len(valid_idxs)} of {num_boxes} "
-            f"boxes (indexes: {valid_idxs}, type: {box_type})"
+            f"boxes (indexes: {valid_idxs}, type: {box_type}, "
+            f"img: {image_width}x{image_height})"
         )
 
         return (prompt, selected_masks)
