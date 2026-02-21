@@ -2,12 +2,16 @@
 pose/nodes.py - ComfyUI node definitions for pose rendering and repair.
 """
 
-import torch
 import numpy as np
+import torch
 from PIL import Image
 
-from .repair import repair_pose_keypoints
 from .render import render_single_meta_to_image
+from .repair import repair_pose_keypoints
+from .scale import (
+    MEASUREMENT_NAMES,
+    compute_adjust_scale,
+)
 from .utils import UPSCALE_METHODS
 
 
@@ -92,7 +96,9 @@ class MH_RenderPose:
     ):
         if pose_keypoints is None:
             print("[MH_RenderPose] No pose keypoints provided, returning empty image")
-            empty = torch.zeros((1, canvas_height, canvas_width, 3), dtype=torch.float32)
+            empty = torch.zeros(
+                (1, canvas_height, canvas_width, 3), dtype=torch.float32
+            )
             return (empty,)
 
         if not isinstance(pose_keypoints, (list, tuple)):
@@ -100,10 +106,14 @@ class MH_RenderPose:
 
         if len(pose_keypoints) == 0:
             print("[MH_RenderPose] No pose keypoints provided, returning empty image")
-            empty = torch.zeros((1, canvas_height, canvas_width, 3), dtype=torch.float32)
+            empty = torch.zeros(
+                (1, canvas_height, canvas_width, 3), dtype=torch.float32
+            )
             return (empty,)
 
-        print(f"[MH_RenderPose] Rendering {len(pose_keypoints)} frames at {canvas_width}x{canvas_height}")
+        print(
+            f"[MH_RenderPose] Rendering {len(pose_keypoints)} frames at {canvas_width}x{canvas_height}"
+        )
 
         images = []
         for meta in pose_keypoints:
@@ -208,3 +218,98 @@ class MH_RepairDWPose:
         )
 
         return (repaired,)
+
+
+class MH_AutoPoseScaleCalculator:
+    """
+    Computes an adjust_scale ratio by comparing a skeleton measurement
+    (e.g. torso length) between a source pose and a target pose.
+
+    adjust_scale = target_distance / source_distance
+
+    Connect the FLOAT output to the adjust_scale input of MH_PoseRetargeter
+    (or WanViTPoseRetargeterToSrc).
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "source_pose": ("POSE_KEYPOINT",),
+                "target_pose": ("POSE_KEYPOINT",),
+                "measurement": (
+                    MEASUREMENT_NAMES,
+                    {
+                        "default": "torso",
+                        "tooltip": (
+                            "Which skeleton segment to compare. "
+                            "'torso' = Neck→MidHip, 'legs' = MidHip→MidAnkle, "
+                            "'torso_and_legs' = Neck→MidHip→MidAnkle, "
+                            "'shoulders' = shoulder width"
+                        ),
+                    },
+                ),
+                "fallback_scale": (
+                    "FLOAT",
+                    {
+                        "default": 1.0,
+                        "min": 0.01,
+                        "max": 10.0,
+                        "step": 0.01,
+                        "tooltip": (
+                            "Value to return if keypoints are insufficient "
+                            "to compute the ratio automatically"
+                        ),
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("FLOAT",)
+    RETURN_NAMES = ("adjust_scale",)
+    FUNCTION = "calculate"
+    CATEGORY = "MH/Pose"
+
+    def calculate(
+        self,
+        source_pose,
+        target_pose,
+        measurement,
+        fallback_scale,
+    ):
+        # Unwrap lists – we only need the first frame from each
+        if isinstance(source_pose, (list, tuple)):
+            if len(source_pose) == 0:
+                print(
+                    "[MH_AutoPoseScaleCalculator] source_pose is empty, using fallback"
+                )
+                return (fallback_scale,)
+            source_meta = source_pose[0]
+        else:
+            source_meta = source_pose
+
+        if isinstance(target_pose, (list, tuple)):
+            if len(target_pose) == 0:
+                print(
+                    "[MH_AutoPoseScaleCalculator] target_pose is empty, using fallback"
+                )
+                return (fallback_scale,)
+            target_meta = target_pose[0]
+        else:
+            target_meta = target_pose
+
+        scale = compute_adjust_scale(source_meta, target_meta, measurement)
+
+        if scale is None:
+            print(
+                f"[MH_AutoPoseScaleCalculator] Could not compute scale with "
+                f"measurement='{measurement}' (missing keypoints). "
+                f"Using fallback={fallback_scale}"
+            )
+            return (fallback_scale,)
+
+        print(
+            f"[MH_AutoPoseScaleCalculator] measurement='{measurement}' → "
+            f"adjust_scale={scale:.4f}"
+        )
+        return (scale,)
