@@ -11,6 +11,7 @@ from .repair import repair_pose_keypoints
 from .scale import (
     MEASUREMENT_NAMES,
     compute_adjust_scale,
+    retarget_pose_sequence,
 )
 from .utils import UPSCALE_METHODS
 
@@ -313,3 +314,86 @@ class MH_AutoPoseScaleCalculator:
             f"adjust_scale={scale:.4f}"
         )
         return (scale,)
+
+
+class MH_PoseRetargeter:
+    """
+    Retargets a source pose sequence onto a target skeleton's proportions.
+
+    For every frame the source skeleton is:
+      1. Centered on its own anchor (mid-hip)
+      2. Scaled by adjust_scale
+      3. Repositioned at the target skeleton's anchor
+
+    This is the Python equivalent of WanViTPoseRetargeterToSrc.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "source_pose": ("POSE_KEYPOINT",),
+                "target_pose": ("POSE_KEYPOINT",),
+                "adjust_scale": (
+                    "FLOAT",
+                    {
+                        "default": 1.0,
+                        "min": 0.01,
+                        "max": 10.0,
+                        "step": 0.01,
+                        "tooltip": (
+                            "Scale ratio applied to the source skeleton. "
+                            "Connect the output of MH_AutoPoseScaleCalculator "
+                            "here to automate this value."
+                        ),
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("POSE_KEYPOINT",)
+    RETURN_NAMES = ("retargeted_pose",)
+    FUNCTION = "retarget"
+    CATEGORY = "MH/Pose"
+
+    def retarget(
+        self,
+        source_pose,
+        target_pose,
+        adjust_scale,
+    ):
+        # Normalise inputs to lists
+        if source_pose is None:
+            print("[MH_PoseRetargeter] source_pose is None, returning empty")
+            return ([],)
+
+        if not isinstance(source_pose, (list, tuple)):
+            source_pose = [source_pose]
+
+        if len(source_pose) == 0:
+            print("[MH_PoseRetargeter] source_pose is empty, returning empty")
+            return ([],)
+
+        # Target: take first frame only
+        if isinstance(target_pose, (list, tuple)):
+            if len(target_pose) == 0:
+                print(
+                    "[MH_PoseRetargeter] target_pose is empty, returning source unmodified"
+                )
+                return (source_pose,)
+            target_meta = target_pose[0]
+        else:
+            target_meta = target_pose
+
+        print(
+            f"[MH_PoseRetargeter] Retargeting {len(source_pose)} frames "
+            f"with adjust_scale={adjust_scale:.4f}"
+        )
+
+        retargeted = retarget_pose_sequence(
+            source_metas=list(source_pose),
+            target_meta=target_meta,
+            adjust_scale=adjust_scale,
+        )
+
+        return (retargeted,)
