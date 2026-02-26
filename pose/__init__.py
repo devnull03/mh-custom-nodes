@@ -6,6 +6,7 @@ MH Pose package - Pose rendering, repair, and scale calculation nodes for ComfyU
 
 from .nodes import (
     MH_AutoPoseScaleCalculator,
+    MH_PoseRetargeter,
     MH_RenderPose,
     MH_RepairDWPose,
 )
@@ -14,12 +15,14 @@ NODE_CLASS_MAPPINGS = {
     "MH_RenderPose": MH_RenderPose,
     "MH_RepairDWPose": MH_RepairDWPose,
     "MH_AutoPoseScaleCalculator": MH_AutoPoseScaleCalculator,
+    "MH_PoseRetargeter": MH_PoseRetargeter,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MH_RenderPose": "MH Render Pose",
     "MH_RepairDWPose": "MH Repair DWPose",
     "MH_AutoPoseScaleCalculator": "MH Auto Pose Scale Calculator",
+    "MH_PoseRetargeter": "MH Pose Retargeter",
 }
 
 __all__ = [
@@ -29,4 +32,5 @@ __all__ = [
     "MH_RenderPose",
     "MH_RepairDWPose",
     "MH_AutoPoseScaleCalculator",
+    "MH_PoseRetargeter",
 ]

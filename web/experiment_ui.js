@@ -21,72 +21,24 @@ app.registerExtension({
 		}
 	},
 
+	getNodeMenuItems(node) {
+		const items = [];
+		if (node.comfyClass === "MH_ExperimentHub") {
+			items.push({
+				content: "Update Values",
+				callback: async () => {
+					updateHookValuesForNode(node);
+				},
+			});
+		}
+		return items;
+	},
+
 	async beforeRegisterNodeDef(nodeType, nodeData, app) {
 		if (nodeData.name === "MH_ExperimentHub") {
-			const onNodeCreated = nodeType.prototype.onNodeCreated;
-
-			nodeType.prototype.onNodeCreated = function () {
-				if (onNodeCreated) {
-					onNodeCreated.apply(this, arguments);
-				}
-
-				// Add "Update Values" button widget
-				this.addWidget("button", "Update Values", null, () => {
-					this.updateHookValues();
-				});
-			};
-
+			const _app = app;
 			nodeType.prototype.updateHookValues = function () {
-				const graph = app.graph;
-				const numRuns =
-					this.widgets.find((w) => w.name === "num_runs")?.value || 1;
-
-				if (!this.inputs || this.inputs.length === 0) {
-					alert("No hooks connected!");
-					return;
-				}
-
-				for (const input of this.inputs) {
-					if (input.link) {
-						const link = graph.links[input.link];
-						if (!link) continue;
-
-						const sourceNode = graph.getNodeById(link.origin_id);
-						if (!sourceNode || sourceNode.type !== "MH_ValueHook")
-							continue;
-
-						const nameWidget = sourceNode.widgets.find(
-							(w) => w.name === "name",
-						);
-						const label = nameWidget?.value || "param";
-
-						const rangeStr = prompt(
-							`Values for '${label}'? (${numRuns} runs)\n\n` +
-								`Formats:\n` +
-								`  - CSV: 7, 8, 9\n` +
-								`  - Range: start:end:step (e.g., 0.5:1.5:0.1)\n` +
-								`  - Single: 7.5`,
-						);
-
-						if (rangeStr === null) return;
-
-						const values = parseRange(rangeStr);
-						if (values.length === 0) {
-							alert(`Invalid format for '${label}'`);
-							return;
-						}
-
-						// Store values on the source node for later use
-						sourceNode._experimentValues = values;
-						console.log(
-							`[MH] ${label}: ${values.length} values stored`,
-						);
-					}
-				}
-
-				alert(
-					"Values updated! Click 'Run Experiments' in the menu to start.",
-				);
+				updateHookValuesForNode(this, _app);
 			};
 		}
 		if (nodeData.name === "mh_MaskMinimalCrop") {
@@ -133,6 +85,58 @@ app.registerExtension({
 		}
 	},
 });
+
+function updateHookValuesForNode(node, appRef) {
+	const graph = (appRef || app).graph;
+	const numRuns =
+		node.widgets.find((w) => w.name === "num_runs")?.value || 1;
+
+	if (!node.inputs || node.inputs.length === 0) {
+		alert("No hooks connected!");
+		return;
+	}
+
+	for (const input of node.inputs) {
+		if (input.link) {
+			const link = graph.links[input.link];
+			if (!link) continue;
+
+			const sourceNode = graph.getNodeById(link.origin_id);
+			if (!sourceNode || sourceNode.type !== "MH_ValueHook")
+				continue;
+
+			const nameWidget = sourceNode.widgets.find(
+				(w) => w.name === "name",
+			);
+			const label = nameWidget?.value || "param";
+
+			const rangeStr = prompt(
+				`Values for '${label}'? (${numRuns} runs)\n\n` +
+					`Formats:\n` +
+					`  - CSV: 7, 8, 9\n` +
+					`  - Range: start:end:step (e.g., 0.5:1.5:0.1)\n` +
+					`  - Single: 7.5`,
+			);
+
+			if (rangeStr === null) return;
+
+			const values = parseRange(rangeStr);
+			if (values.length === 0) {
+				alert(`Invalid format for '${label}'`);
+				return;
+			}
+
+			sourceNode._experimentValues = values;
+			console.log(
+				`[MH] ${label}: ${values.length} values stored`,
+			);
+		}
+	}
+
+	alert(
+		"Values updated! Click 'Run Experiments' in the menu to start.",
+	);
+}
 
 async function runExperiments() {
 	const graph = app.graph;

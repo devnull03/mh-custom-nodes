@@ -189,3 +189,85 @@ def compute_adjust_scale(
         return None  # avoid division by zero
 
     return tgt_dist / src_dist
+
+
+def _select_anchor(kps: np.ndarray) -> Optional[np.ndarray]:
+    return _get_midhip(kps) or _get_neck(kps)
+
+
+def _set_body_kps(meta: Any, body_kps: np.ndarray) -> Any:
+    if meta is None:
+        return meta
+
+    if hasattr(meta, "kps_body"):
+        try:
+            meta.kps_body = body_kps[:, :2]
+        except Exception:
+            meta.kps_body = body_kps[:, :2].tolist()
+
+        if hasattr(meta, "kps_body_p"):
+            try:
+                meta.kps_body_p = body_kps[:, 2]
+            except Exception:
+                meta.kps_body_p = body_kps[:, 2].tolist()
+        return meta
+
+    if hasattr(meta, "keypoints_body"):
+        try:
+            setattr(meta, "keypoints_body", body_kps)
+        except Exception:
+            setattr(meta, "keypoints_body", body_kps.tolist())
+        return meta
+
+    if isinstance(meta, dict):
+        if "keypoints_body" in meta:
+            meta["keypoints_body"] = body_kps.tolist()
+        if "people" in meta and meta.get("people"):
+            meta["people"][0]["pose_keypoints_2d"] = body_kps.reshape(-1).tolist()
+        elif "pose_keypoints_2d" in meta:
+            meta["pose_keypoints_2d"] = body_kps.reshape(-1).tolist()
+        return meta
+
+    return meta
+
+
+def retarget_pose_sequence(
+    source_metas: List[Any],
+    target_meta: Any,
+    adjust_scale: float = 1.0,
+) -> List[Any]:
+    if source_metas is None:
+        return []
+
+    target_kps = _body_kps_from_meta(target_meta)
+    if target_kps is None:
+        return list(source_metas)
+
+    target_anchor = _select_anchor(target_kps)
+    if target_anchor is None:
+        return list(source_metas)
+
+    retargeted: List[Any] = []
+
+    for meta in source_metas:
+        body_kps = _body_kps_from_meta(meta)
+        if body_kps is None:
+            retargeted.append(meta)
+            continue
+
+        src_anchor = _select_anchor(body_kps)
+        if src_anchor is None:
+            retargeted.append(meta)
+            continue
+
+        kps = np.array(body_kps, dtype=np.float64, copy=True)
+        xy = kps[:, :2]
+        valid = np.isfinite(xy).all(axis=1)
+
+        if np.any(valid):
+            xy_scaled = (xy[valid] - src_anchor) * float(adjust_scale) + target_anchor
+            kps[valid, :2] = xy_scaled
+
+        retargeted.append(_set_body_kps(meta, kps.astype(np.float32)))
+
+    return retargeted
