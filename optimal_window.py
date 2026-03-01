@@ -46,6 +46,8 @@ class mh_GetOptimalWindow:
             Optimal window size (chunk size) for processing the video.
             For short videos (<= max_allowed), returns exactly video_frames.
             For longer videos, returns an aligned chunk size.
+            Always returns a value of the form 4n+1 (e.g. 73, 77, 81) so that
+            the VAE decode length matches the loop stride (frame_window_size - 1).
         """
         max_allowed = base_window * (1 + alpha)
 
@@ -59,6 +61,15 @@ class mh_GetOptimalWindow:
             optimal = chunk_size + align
 
         optimal = min(99, optimal)
+
+        # Video VAE expects frame counts (and thus frame_window_size) to follow
+        # (N-1)*4+1 so that latent_window_size = (F-1)//4 + 1 decodes to exactly F
+        # frames. Otherwise the loop stride (frame_window_size - 1) misaligns with
+        # actual decoded frames and causes disjointed jumps between windows.
+        n = math.ceil((optimal - 1) / 4)
+        optimal = 4 * n + 1
+        if optimal > 99:
+            optimal = 97  # largest 4n+1 <= 99
 
         return (optimal,)
 
