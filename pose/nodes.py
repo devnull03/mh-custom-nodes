@@ -604,6 +604,54 @@ class MH_PoseAlignImage:
             return right
         return None
 
+    def _feet_center_from_meta(self, meta, canvas_w: int, canvas_h: int, conf: float):
+        if meta is None:
+            return None
+        body_kps, _, _, _ = extract_all_keypoints(meta)
+        if body_kps is None:
+            return None
+
+        arr = np.asarray(body_kps, dtype=np.float32)
+        if arr.size == 0:
+            return None
+        if arr.ndim == 1 and arr.size % 3 == 0:
+            arr = arr.reshape(-1, 3)
+        if arr.ndim == 2 and arr.shape[1] == 2:
+            arr = np.concatenate(
+                [arr, np.ones((arr.shape[0], 1), dtype=np.float32)], axis=1
+            )
+
+        xs = arr[:, 0]
+        ys = arr[:, 1]
+        if (
+            np.nanmax(xs) <= 1.5
+            and np.nanmax(ys) <= 1.5
+            and canvas_w > 0
+            and canvas_h > 0
+        ):
+            arr = arr.copy()
+            arr[:, 0] = arr[:, 0] * float(canvas_w)
+            arr[:, 1] = arr[:, 1] * float(canvas_h)
+
+        def _valid(idx: int):
+            if idx >= arr.shape[0]:
+                return None
+            x, y, c = arr[idx]
+            if float(c) > conf and not (float(x) == 0.0 and float(y) == 0.0):
+                return float(x), float(y)
+            return None
+
+        # Ankle indices: 10 (left), 13 (right)
+        left = _valid(10)
+        right = _valid(13)
+        if left is not None and right is not None:
+            return (left[0] + right[0]) / 2.0, (left[1] + right[1]) / 2.0
+        if left is not None:
+            return left
+        if right is not None:
+            return right
+        return None
+
     def _torso_bbox_from_meta(self, meta, canvas_w: int, canvas_h: int, conf: float):
         if meta is None:
             return None
@@ -719,24 +767,37 @@ class MH_PoseAlignImage:
             face_center_1 = self._face_center_from_meta(
                 ref_meta, ref_w, ref_h, confidence_threshold
             )
-            hip_center_1 = self._hip_center_from_meta(
-                ref_meta, ref_w, ref_h, confidence_threshold
-            )
             face_center_2 = self._face_center_from_meta(
                 align_meta, w2, h2, confidence_threshold
             )
-            hip_center_2 = self._hip_center_from_meta(
+
+            # Try feet first, fallback to hip
+            feet_center_1 = self._feet_center_from_meta(
+                ref_meta, ref_w, ref_h, confidence_threshold
+            )
+            feet_center_2 = self._feet_center_from_meta(
                 align_meta, w2, h2, confidence_threshold
             )
 
+            lower_center_1 = feet_center_1
+            lower_center_2 = feet_center_2
+
+            if lower_center_1 is None or lower_center_2 is None:
+                lower_center_1 = self._hip_center_from_meta(
+                    ref_meta, ref_w, ref_h, confidence_threshold
+                )
+                lower_center_2 = self._hip_center_from_meta(
+                    align_meta, w2, h2, confidence_threshold
+                )
+
             if (
                 face_center_1 is not None
-                and hip_center_1 is not None
+                and lower_center_1 is not None
                 and face_center_2 is not None
-                and hip_center_2 is not None
+                and lower_center_2 is not None
             ):
-                dist1 = abs(face_center_1[1] - hip_center_1[1])
-                dist2 = abs(face_center_2[1] - hip_center_2[1])
+                dist1 = abs(face_center_1[1] - lower_center_1[1])
+                dist2 = abs(face_center_2[1] - lower_center_2[1])
                 if dist2 > 0:
                     scale_factor = dist1 / dist2
                     if scale_factor < 1.0:
