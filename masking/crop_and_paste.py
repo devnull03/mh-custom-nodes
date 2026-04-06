@@ -13,9 +13,9 @@ def _round_up_div(value, divisor):
 
 
 def tensor2pil(image):
-    return Image.fromarray(
-        np.clip(255.0 * image.cpu().numpy(), 0, 255).astype(np.uint8)
-    )
+    arr = image.cpu().numpy()
+    arr = np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=0.0)
+    return Image.fromarray(np.clip(255.0 * arr, 0, 255).astype(np.uint8))
 
 
 def pil2tensor(image):
